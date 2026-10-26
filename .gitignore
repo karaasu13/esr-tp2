@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Editores
+.vscode/
+.idea/
+*.swp
+
+# Capturas e logs dos testes
+*.pcap
+*.pcapng
+*.log
+logs/
+
+# Sistema
+.DS_Store
