@@ -14,6 +14,9 @@ Grupo: George, Inês, Pedro
 | `player/` | Player de vídeo (adaptado do ProgEx). Corre num processo à parte e recebe do nó local por UDP em localhost |
 | `configs/` | Ficheiros JSON do bootstrapper, um por cenário (IP → ID e lista de ligações) |
 | `topologias/` | Topologias do CORE (`.xml`) |
+| `scripts/` | Scripts auxiliares para correr testes e demos no CORE (ex: `demo-cenario1.sh`) |
+| `docs/` | Especificação do protocolo |
+| `tests/` | Testes automáticos (`python3 -m unittest`) |
 
 ## Decisões base
 
@@ -26,14 +29,24 @@ O porquê de cada decisão e as alternativas estão no documento "TP2 ESR — Pl
 
 ## Como correr
 
-Previsto (ainda não implementado):
+Já existe:
+
+```
+python3 -m unittest -v                                      # testes do transporte
+python3 -m ott.demo_transporte --id 2 1=10.0.0.10 3=10.0.1.20   # demo no CORE
+```
+
+Previsto:
 
 ```
 python3 -m bootstrapper configs/cenario2.json
 python3 -m ott <ip-do-bootstrapper>
 ```
 
+Especificação do protocolo: [`docs/protocolo.md`](docs/protocolo.md).
+
 ## Regras de trabalho
 
 - Ninguém faz push direto para `main`: cada tarefa num ramo (ex: `george/transporte`) e pull request.
-- Não fazer commit de capturas (`.pcap`), logs nem vídeos grandes.
+- Não fazer commit de capturas (`.pcap`), logs nem vídeos grandes. Os logs dos testes vão para `logs/` (ignorada pelo git).
+- Cada coisa na sua pasta: código em `ott/` e `bootstrapper/`, topologias em `topologias/`, scripts de apoio em `scripts/`.
