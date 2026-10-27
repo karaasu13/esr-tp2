@@ -162,6 +162,27 @@ class Transporte(asyncio.DatagramProtocol):
         return r[0] if r else None
 
     # ------------------------------------------------------------ envio
+    def hello(self, no: int) -> int:
+        """Envia um HELLO fiável para o vizinho, devolvendo o id da mensagem."""
+        return self.send(no, Tipo.HELLO, {}, fiavel=True)
+
+    def hello_ack(self, no: int) -> int:
+        """Envia um HELLO_ACK fiável para o vizinho, devolvendo o id da mensagem."""
+        return self.send(no, Tipo.HELLO_ACK, {}, fiavel=True)
+
+    def register(self) -> int:
+        """Envia um REGISTER fiável para o bootstrapper, devolvendo o id da mensagem."""
+        return self.send(0, Tipo.REGISTER, {}, fiavel=True)
+
+    def register_ack(self, no: int, id_novo: int, vizinhos: list[dict]) -> int:
+            """Envia um REGISTER_ACK, devolvendo o id da mensagem."""
+            return self.send(no, Tipo.REGISTER_ACK, {"id": id_novo, "vizinhos": vizinhos}, fiavel=True) 
+
+    def keepalive(self, no: int) -> int:
+        """Envia um KEEPALIVE fiável para o vizinho, devolvendo o id da mensagem."""
+        return self.send(no, Tipo.KEEPALIVE, {}, fiavel=True)
+
+
     def send(
         self,
         destino: int,
