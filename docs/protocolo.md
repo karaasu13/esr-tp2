@@ -28,7 +28,7 @@ Cabeçalho fixo de **14 bytes**, ordem de rede (`struct "!BBBHHIHB"`).
 | flags | 1 B | bit 0 `FIAVEL`: o recetor tem de responder com ACK. Restantes bits reservados | ack-eliciting |
 | origem | 2 B | ID de quem envia. `0` = ainda sem ID (só antes do registo) | Source CID |
 | destino | 2 B | ID do destinatário. `0` = bootstrapper. Um nó com ID descarta pacotes que não são para si | Destination CID |
-| nº pacote (pn) | 4 B | Contador do nó, **nunca reutilizado**, nem nas retransmissões | Packet Number |
+| nº pacote (pn) | 4 B | Contador do nó, **nunca reutilizado**, nem nas retransmissões. Começa num valor aleatório (como o ISN do TCP), para um nó reiniciado não repetir ids que os vizinhos ainda guardam | Packet Number |
 | fluxo: servidor | 2 B | ID do servidor de origem do fluxo. `0` = controlo | Stream ID |
 | fluxo: stream | 1 B | Qual dos vídeos desse servidor | Stream ID |
 | id da mensagem | 4 B | **Só em pacotes fiáveis.** Identifica a mensagem: é o pn do 1.º envio e mantém-se nas retransmissões | stream offset |
@@ -58,14 +58,16 @@ Cabeçalho fixo de **14 bytes**, ordem de rede (`struct "!BBBHHIHB"`).
   - Como o pn nunca se repete, cada ACK diz exatamente a que envio responde. O RTT medido não é ambíguo, que é o problema que o TCP contorna com o algoritmo de Karn. É isto que permite usar o RTT como métrica na Etapa 2.
   - Como o id da mensagem se mantém, o recetor deteta duplicados quando foi o ACK que se perdeu. Volta a enviar ACK, mas não entrega a mensagem outra vez. **Entrega exatamente uma vez.**
 - RTO = `srtt + 4·rttvar` (RFC 6298), com mínimo de 0,2 s. Antes da 1.ª medição é 0,5 s. Duplica a cada tentativa até um máximo de 2 s.
-- Ao fim de **5 tentativas** sem ACK, o destino é dado como em baixo.
+- Para um **vizinho**, retransmite-se até haver ACK ou até o idle timeout o dar como em baixo (a mensagem é então cancelada). ACKs perdidos não chegam para dar um vizinho como morto: no CORE, com 20% de perda, isso deu um falso alarme.
+- Para quem **não é vizinho** (ex: o bootstrapper), desiste-se ao fim de **5 tentativas**.
 - O RTT é atualizado com médias móveis exponenciais (`srtt ← 7/8·srtt + 1/8·amostra`), como no TCP e no QUIC.
 
 ## Vizinhos vivos (keepalive e idle timeout)
 
-- Se um nó não enviou nada a um vizinho no último **1 s**, envia-lhe um `KEEPALIVE`. Assim só há keepalive quando a ligação está parada.
+- Se um nó não enviou nada a um vizinho nos últimos **0,5 s**, envia-lhe um `KEEPALIVE`. Assim só há keepalive quando a ligação está parada.
 - O KEEPALIVE pede ACK, para medir o RTT mesmo sem tráfego, mas não é retransmitido: o seguinte faz esse papel.
-- Se não chega **nada** de um vizinho durante **3,5 s** (cerca de 3 keepalives perdidos), o vizinho é dado como em baixo, as mensagens pendentes para ele são canceladas e é chamado `on_neighbor_down(id)`.
+- Quando um vizinho é dado como em baixo, a memória de duplicados dele é apagada: se voltar, é uma ligação nova.
+- Se não chega **nada** de um vizinho durante **3,5 s** (cerca de 7 oportunidades de dar sinal), o vizinho é dado como em baixo, as mensagens pendentes para ele são canceladas e é chamado `on_neighbor_down(id)`.
 
 ## Interface do módulo (`ott/transporte.py`)
 
@@ -92,12 +94,12 @@ Os callbacks são funções normais, não `async`, e não podem bloquear. Se pre
 | Parâmetro | Valor | Porquê |
 |---|---|---|
 | Porta | 5000 | Igual em todos os nós: no CORE cada nó tem o seu namespace |
-| Keepalive | 1 s | Deteção rápida sem gastar quase nada de rede |
-| Idle timeout | 3,5 s | Tolera 3 keepalives perdidos seguidos |
+| Keepalive | 0,5 s | Com 1 s, uma simulação deu cerca de 1,5 falsos "em baixo" por hora com 20% de perda; com 0,5 s, nenhum em 10 h. Custa cerca de 1,5 kbit/s por vizinho num link parado (`scripts/sim_falsos_alarmes.py`) |
+| Idle timeout | 3,5 s | Deteta uma falha em 3,5 a 3,75 s (medido no CORE) e cabem lá cerca de 7 keepalives |
 | RTO inicial / mín. / máx. | 0,5 / 0,2 / 2 s | O RTT no CORE é de dezenas de ms |
-| Tentativas | 5 | Com 20% de perda em cada sentido, a probabilidade de falhar as 5 é ≈ 0,6% (0,36⁵) |
+| Tentativas (só não vizinhos) | 5 | Com 20% de perda em cada sentido, a probabilidade de falhar as 5 é ≈ 0,6% (0,36⁵). Para vizinhos não há limite: decide o idle timeout |
 
 ## Testar
 
-- `python3 -m unittest -v`: testes em localhost, com perda simulada de 30%.
-- No CORE: `python3 -m ott.demo_transporte --id 2 1=10.0.0.10 3=10.0.1.20`. Mete perda num link e mata um nó (instruções no próprio ficheiro).
+- `python3 -m unittest -v`: testes em localhost, com perda simulada de 30% e 40%.
+- No CORE (cenário 1, `topologias/teste1.xml`): `bash scripts/demo-cenario1.sh [nome-do-teste]` em cada nó; com nome, grava o log em `logs/`.

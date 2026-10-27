@@ -33,16 +33,22 @@ async def main() -> None:
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s.%(msecs)03d %(message)s", datefmt="%H:%M:%S")
 
+    log = logging.getLogger("ott.demo")
+    config = dict(args.vizinhos)
     t: Transporte
 
     def recebida(origem, tipo, corpo, fluxo, addr):
+        if origem in config and origem not in t.neighbors:
+            # Um vizinho dado como em baixo voltou a dar sinal (ou arrancou depois de nós).
+            t.add_neighbor(origem, config[origem])
+            log.info("[%s] vizinho %s de volta", t.id, origem)
         rtt = t.rtt(origem)
-        print(f"[{t.id}] <- {origem}: {Tipo(tipo).name} {corpo}  (RTT {rtt * 1000:.1f} ms)" if rtt
-              else f"[{t.id}] <- {origem}: {Tipo(tipo).name} {corpo}")
+        log.info("[%s] <- %s: %s %s%s", t.id, origem, Tipo(tipo).name, corpo,
+                 f"  (RTT {rtt * 1000:.1f} ms)" if rtt else "")
 
     t = Transporte(args.id, on_message=recebida)
     await t.start(porta=args.porta)
-    for no, addr in args.vizinhos:
+    for no, addr in config.items():
         t.add_neighbor(no, addr)
 
     n = 0

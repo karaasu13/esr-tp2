@@ -3,9 +3,10 @@
 O que este módulo garante a quem o usa (bootstrapper, vizinhos, rotas, streaming):
   * send(..., fiavel=True): a mensagem chega uma e uma só vez, ou o vizinho é dado
     como morto. ACK e retransmissão são tratados aqui, não no código de cima.
+    Para quem não é vizinho (ex: bootstrapper) desiste-se ao fim de MAX_TENTATIVAS.
   * send(..., fiavel=False): melhor esforço (vídeo, mensagens periódicas).
-  * on_neighbor_down(id): chamado quando um vizinho deixa de dar sinal (idle timeout)
-    ou não confirma uma mensagem fiável depois de todas as tentativas.
+  * on_neighbor_down(id): chamado quando um vizinho deixa de dar sinal (idle timeout).
+    Mensagens fiáveis para um vizinho são retransmitidas até haver ACK ou até ele cair.
   * rtt(id): RTT suavizado até ao vizinho, medido com os ACK (métrica da Etapa 2).
 
 Ideias do QUIC usadas (ver docs/protocolo.md):
@@ -36,12 +37,14 @@ OnMessage = Callable[[int, int, "dict | bytes", tuple[int, int], Endereco], None
 OnNeighborDown = Callable[[int], None]
 
 # Valores por omissão dos temporizadores (segundos)
-KEEPALIVE = 1.0  # envia KEEPALIVE se não enviou nada ao vizinho neste intervalo
-IDLE_TIMEOUT = 3.5  # vizinho morto se não se recebe nada dele neste tempo (~3 keepalives)
+KEEPALIVE = 0.5  # envia KEEPALIVE se não enviou nada ao vizinho neste intervalo
+# (com 1 s havia ~1,5 falsos "em baixo" por hora com 20% de perda; com 0,5 s, nenhum em 10 h:
+#  ver scripts/sim_falsos_alarmes.py e o doc do protocolo)
+IDLE_TIMEOUT = 3.5  # vizinho morto se não se recebe nada dele neste tempo (~7 keepalives)
 RTO_INICIAL = 0.5  # timeout de retransmissão antes de haver medições de RTT
 RTO_MIN = 0.2
 RTO_MAX = 2.0  # teto do backoff, para não ficar minutos à espera
-MAX_TENTATIVAS = 5  # 1 envio + 4 retransmissões (com backoff exponencial)
+MAX_TENTATIVAS = 5  # para não vizinhos; para vizinhos só avisa e continua (decide o idle timeout)
 
 MAX_ENVIOS_GUARDADOS = 4096  # para o cálculo do RTT
 MAX_VISTOS_POR_ORIGEM = 1024  # para a deteção de duplicados
@@ -96,7 +99,9 @@ class Transporte(asyncio.DatagramProtocol):
 
         self._transport: asyncio.DatagramTransport | None = None
         self._tarefa_keepalive: asyncio.Task | None = None
-        self._pn = 0
+        # Nº inicial aleatório, como o ISN do TCP: se o nó reiniciar, os ids das mensagens
+        # novas não colidem com os que os vizinhos ainda guardam da execução anterior.
+        self._pn = self._rand.randrange(1, 1 << 31)
         self._enderecos: dict[int, Endereco] = {}  # ID -> (ip, porta), inclui o bootstrapper
         self._vizinhos: dict[int, _Vizinho] = {}  # só estes levam keepalive / idle timeout
         self._pendentes: dict[int, _Pendente] = {}  # id_msg -> mensagem por confirmar
@@ -145,6 +150,7 @@ class Transporte(asyncio.DatagramProtocol):
     def remove_neighbor(self, no: int) -> None:
         self._vizinhos.pop(no, None)
         self._cancelar_pendentes(no)
+        self._esquecer_vistos(no)
 
     @property
     def neighbors(self) -> list[int]:
@@ -220,14 +226,22 @@ class Transporte(asyncio.DatagramProtocol):
         p = self._pendentes.get(id_msg)
         if p is None:
             return
+        if p.destino in self._vizinhos:
+            # Para um vizinho não se desiste: tenta-se até haver ACK ou até o idle timeout o dar
+            # como em baixo (que cancela esta mensagem). Como no QUIC, só o idle timeout decide
+            # que um vizinho morreu; ACKs perdidos não chegam (vimos um falso alarme no CORE).
+            if p.tentativas == self.max_tentativas:
+                log.warning("[%s] %s (msg %d) para %s ainda sem ACK após %d tentativas",
+                            self.id, nome_tipo(p.tipo), id_msg, p.destino, p.tentativas)
+            self._transmitir(p)
+            return
         if p.tentativas < self.max_tentativas:
             self._transmitir(p)
             return
-        log.warning("[%s] %s (msg %d) para %s sem ACK após %d tentativas",
+        # Não vizinho (ex: bootstrapper): não há idle timeout, por isso desiste-se.
+        log.warning("[%s] %s (msg %d) para %s sem ACK após %d tentativas, desisto",
                     self.id, nome_tipo(p.tipo), id_msg, p.destino, p.tentativas)
         self._esquecer(p)
-        if p.destino in self._vizinhos:
-            self._vizinho_morreu(p.destino, "sem ACK")
 
     def _esquecer(self, p: _Pendente) -> None:
         if p.timer:
@@ -287,6 +301,10 @@ class Transporte(asyncio.DatagramProtocol):
             vistos.popitem(last=False)
         return False
 
+    def _esquecer_vistos(self, no: int) -> None:
+        for chave in [c for c in self._vistos if c[1] == no]:
+            del self._vistos[chave]
+
     def _processar_ack(self, p: Pacote) -> None:
         if len(p.corpo) < CORPO_ACK.size:
             return
@@ -326,6 +344,7 @@ class Transporte(asyncio.DatagramProtocol):
         if self._vizinhos.pop(no, None) is None:
             return
         self._cancelar_pendentes(no)
+        self._esquecer_vistos(no)  # se voltar, é uma "ligação" nova
         log.warning("[%s] vizinho %s em baixo (%s)", self.id, no, motivo)
         if self.on_neighbor_down:
             self.on_neighbor_down(no)

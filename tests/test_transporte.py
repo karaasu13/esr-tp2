@@ -82,12 +82,41 @@ class TestTransporte(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.down[1], [2])
         self.assertNotIn(2, a.neighbors)
 
-    async def test_sem_ack_da_vizinho_como_morto(self):
-        a, b = await self.par(max_tentativas=3, idle_timeout=10)
+    async def test_acks_perdidos_nao_matam_vizinho_vivo(self):
+        # Caso visto no CORE: com perda alta, todas as tentativas de uma mensagem ficaram sem
+        # ACK e o vizinho (vivo) era dado como em baixo. Agora só o idle timeout decide.
+        a, b = await self.par(perda=0.4, max_tentativas=2, idle_timeout=10)
+        for n in range(20):
+            a.send(2, Tipo.HELLO, {"n": n}, fiavel=True)
+        for _ in range(200):
+            await asyncio.sleep(0.05)
+            if not a._pendentes:
+                break
+        self.assertEqual(self.down[1], [])
+        self.assertEqual(sorted(c["n"] for o, tp, c in self.rx[2]), list(range(20)))
+
+    async def test_nao_vizinho_desiste_ao_fim_das_tentativas(self):
+        a, b = await self.par(max_tentativas=3)
+        a.set_address(9, ("127.0.0.1", 9))  # ninguém à escuta; não é vizinho
+        a.send(9, Tipo.REGISTER, {}, fiavel=True)
+        await asyncio.sleep(0.6)  # 0.05 + 0.1 + 0.2 s
+        self.assertFalse(a._pendentes)
+        self.assertEqual(self.down[1], [])
+
+    async def test_vizinho_reiniciado_nao_e_tomado_por_duplicado(self):
+        a, b = await self.par()
+        b.send(1, Tipo.HELLO, {"vida": 1}, fiavel=True)
+        await asyncio.sleep(0.1)
+        porta_b = b.endereco_local[1]
         b.close()
-        a.send(2, Tipo.HELLO, {}, fiavel=True)
-        await asyncio.sleep(0.6)  # 0.05 + 0.1 + 0.2 s de espera
-        self.assertEqual(self.down[1], [2])
+        await asyncio.sleep(0.6)  # a dá o b como em baixo
+        b2 = Transporte(2, seed=22, **RAPIDO)  # mesma seed: sem ISN aleatório colidia
+        await b2.start("127.0.0.1", porta_b)
+        self.addAsyncCleanup(self._fechar, {2: b2})
+        b2.add_neighbor(1, a.endereco_local)
+        b2.send(1, Tipo.HELLO, {"vida": 2}, fiavel=True)
+        await asyncio.sleep(0.1)
+        self.assertEqual([c for o, tp, c in self.rx[1]], [{"vida": 1}, {"vida": 2}])
 
     async def test_no_sem_id_recebe_resposta_do_bootstrapper(self):
         boot = Transporte(0, on_message=lambda o, tp, c, f, addr: boot.send(0, Tipo.REGISTER_ACK, {"id": 7}, True) if tp == Tipo.REGISTER else None)
