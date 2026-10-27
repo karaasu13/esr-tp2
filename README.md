@@ -26,12 +26,21 @@ O porquê de cada decisão e as alternativas estão no documento "TP2 ESR — Pl
 
 ## Como correr
 
-Previsto (ainda não implementado):
+Já existe:
+
+```
+python3 -m unittest -v                                      # testes do transporte
+python3 -m ott.demo_transporte --id 2 1=10.0.0.10 3=10.0.1.20   # demo no CORE
+```
+
+Previsto:
 
 ```
 python3 -m bootstrapper configs/cenario2.json
 python3 -m ott <ip-do-bootstrapper>
 ```
+
+Especificação do protocolo: [`docs/protocolo.md`](docs/protocolo.md).
 
 ## Regras de trabalho
 
