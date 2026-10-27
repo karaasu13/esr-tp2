@@ -3,6 +3,7 @@
 Protocolo próprio sobre UDP, inspirado no QUIC (decisões D2, D3 e D6 no doc "TP2 ESR — Plano e decisões").
 Cada nó usa **um só socket UDP**, na porta **5000**, para todos os vizinhos e para o bootstrapper.
 Código: `ott/protocolo.py` (formato) e `ott/transporte.py` (comportamento).
+Os termos técnicos (ACK, RTT, RTO, keepalive…) estão explicados no **Glossário**, no fim.
 
 ## Formato do pacote
 
@@ -103,3 +104,47 @@ Os callbacks são funções normais, não `async`, e não podem bloquear. Se pre
 
 - `python3 -m unittest -v`: testes em localhost, com perda simulada de 30% e 40%.
 - No CORE (cenário 1, `topologias/teste1.xml`): `bash scripts/demo-cenario1.sh [nome-do-teste]` em cada nó; com nome, grava o log em `logs/`.
+
+## Glossário
+
+Os termos técnicos deste documento, em palavras simples. A explicação de cada escolha está no doc "TP2 ESR — Protocolo QUIC-like".
+
+| Termo | O que quer dizer |
+| --- | --- |
+| **UDP** | Forma de enviar pacotes sem garantias: cada pacote vai sozinho e pode perder-se, chegar fora de ordem ou repetido. É rápido e simples. |
+| **TCP** | O contrário do UDP: garante que tudo chega, e por ordem, mas obriga a uma ligação por destino e a esperas quando algo se perde. |
+| **QUIC** | Protocolo moderno (o do HTTP/3) que dá as garantias do TCP por cima de UDP, dentro do próprio programa. Foi a inspiração do nosso. |
+| **Overlay** | A rede "virtual" que os nossos programas formam por cima da rede real. Dois vizinhos no overlay não precisam de estar ligados por um cabo. |
+| **Bootstrapper** | Programa que só recebe os nós novos e lhes diz o ID e os vizinhos. Não entra nas rotas. |
+| **Cabeçalho** | Os primeiros bytes de cada pacote: quem envia, para quem, que tipo de mensagem, etc. |
+| **ACK** | Mensagem curta de "recebi o pacote nº X" (de *acknowledgement*, confirmação). |
+| **Mensagem fiável** | Mensagem que o transporte garante que chega: espera pelo ACK e, se não vier, volta a enviar. |
+| **Retransmissão** | Voltar a enviar uma mensagem cujo ACK não chegou. |
+| **Nº de pacote (pn)** | Número único de cada pacote enviado. Nunca se repete, nem quando se reenvia. |
+| **Id da mensagem** | Número da mensagem. Fica igual nos reenvios, para o recetor reconhecer uma repetida. |
+| **Duplicado** | A mesma mensagem recebida duas vezes. Acontece quando a mensagem chegou mas o ACK se perdeu, e o emissor reenviou. |
+| **RTT** | Tempo de ida e volta (*round-trip time*): desde que se envia um pacote até chegar o ACK dele. |
+| **srtt / rttvar** | A média suavizada do RTT / quanto o RTT costuma variar. |
+| **RTO** | Quanto tempo se espera pelo ACK antes de reenviar (*retransmission timeout*). RTO = srtt + 4 × rttvar, nunca menos de 0,2 s nem mais de 2 s. |
+| **Backoff exponencial** | Duplicar a espera a cada tentativa falhada (0,2 → 0,4 → 0,8 s…), para não encher a rede de reenvios. |
+| **Keepalive** | Mensagem pequena só para dizer "estou vivo", enviada quando não há mais nada para enviar. |
+| **Idle timeout** | Tempo sem receber nada de um vizinho ao fim do qual ele é dado como morto (3,5 s). |
+| **Falso "em baixo"** | Dar como morto um vizinho que está vivo, porque se perderam todos os pacotes dele durante o idle timeout. |
+| **ISN** | O número com que o contador de pacotes começa (*initial sequence number*). É aleatório, para um nó reiniciado não repetir números antigos. |
+| **Fluxo / stream** | Um vídeo de um servidor, identificado pelo par (servidor, nº do vídeo). |
+| **CID** | No QUIC, o número que identifica uma ligação (*connection ID*). O nosso equivalente é o ID do nó. |
+| **PTO** | No QUIC, o equivalente ao nosso RTO (*probe timeout*). |
+| **ACK Delay** | No QUIC, o tempo que o recetor demorou a responder. Desconta-se para o RTT medir só a rede. |
+| **TLS / AEAD / tag** | A cifra do QUIC e o "selo" de 16 B que prova que o pacote não foi alterado. Não usamos. |
+| **Head-of-line blocking** | Quando uma mensagem perdida faz as seguintes ficarem à espera dela. Acontece no TCP. |
+| **Ack-eliciting** | Pacote que pede ACK. |
+| **struct, `!`** | Módulo do Python que converte os campos em bytes. O `!` quer dizer "ordem de rede": todas as máquinas leem os números da mesma maneira. |
+| **JSON** | Formato de texto para dados, ex: `{"id": 3}`. |
+| **asyncio** | Forma de o Python tratar várias coisas "ao mesmo tempo" numa só thread, com temporizadores. |
+| **Callback** | Função nossa que o transporte chama quando acontece algo (chegou uma mensagem, um vizinho caiu). |
+| **tc / netem** | Ferramenta do Linux para simular perda, atraso ou largura de banda num link. |
+| **ARP** | Protocolo que descobre o endereço da placa de rede (MAC) de um IP. Enquanto não tem resposta, os pacotes ficam retidos. |
+| **MTU** | Tamanho máximo de um pacote num link (1500 B). Um pacote maior é partido em fragmentos. |
+| **Inundação controlada** | Enviar uma mensagem a todos os vizinhos, que a passam aos deles, deitando fora as repetidas. |
+| **JOIN** | Proposta para a Etapa 2: pedido de um cliente para receber um fluxo, enviado na direção do servidor. |
+| **CORE** | O emulador de redes onde corremos os testes. |
