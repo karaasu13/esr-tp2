@@ -1,0 +1,125 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<scenario>
+  <networks/>
+  <devices>
+    <device id="1" name="S1" icon="" canvas="1" type="PC" class="" image="" compose="" compose_name="">
+      <position x="66.0" y="367.0" lat="47.575830400985566" lon="-122.1314348866187" alt="2.0"/>
+      <services>
+        <service name="DefaultRoute"/>
+      </services>
+    </device>
+    <device id="2" name="N1" icon="" canvas="1" type="PC" class="" image="" compose="" compose_name="">
+      <position x="228.0" y="71.0" lat="47.578521042540466" lon="-122.1292519804783" alt="2.0"/>
+      <services>
+        <service name="DefaultRoute"/>
+      </services>
+    </device>
+    <device id="3" name="N3" icon="" canvas="1" type="PC" class="" image="" compose="" compose_name="">
+      <position x="629.0" y="62.0" lat="47.57860285042184" lon="-122.1238486140443" alt="2.0"/>
+      <services>
+        <service name="DefaultRoute"/>
+      </services>
+    </device>
+    <device id="4" name="N2" icon="" canvas="1" type="PC" class="" image="" compose="" compose_name="">
+      <position x="202.0" y="643.0" lat="47.57332143496827" lon="-122.12960232343909" alt="2.0"/>
+      <services>
+        <service name="DefaultRoute"/>
+      </services>
+    </device>
+    <device id="5" name="C1" icon="" canvas="1" type="PC" class="" image="" compose="" compose_name="">
+      <position x="619.0" y="653.0" lat="47.57323052814576" lon="-122.12398336133693" alt="2.0"/>
+      <services>
+        <service name="DefaultRoute"/>
+      </services>
+    </device>
+    <device id="6" name="C2" icon="" canvas="1" type="PC" class="" image="" compose="" compose_name="">
+      <position x="876.0" y="374.0" lat="47.57576676927524" lon="-122.12052035591664" alt="2.0"/>
+      <services>
+        <service name="DefaultRoute"/>
+      </services>
+    </device>
+    <device id="7" name="n7" icon="" canvas="1" type="router" class="" image="" compose="" compose_name="">
+      <position x="333.0" y="369.0" lat="47.575812220504794" lon="-122.12783713390581" alt="2.0"/>
+      <services>
+        <service name="OSPFv2"/>
+        <service name="IPForward"/>
+        <service name="zebra"/>
+        <service name="OSPFv3"/>
+      </services>
+    </device>
+    <device id="8" name="n8" icon="" canvas="1" type="router" class="" image="" compose="" compose_name="">
+      <position x="597.0" y="375.0" lat="47.575757679024605" lon="-122.12427980538071" alt="2.0"/>
+      <services>
+        <service name="OSPFv2"/>
+        <service name="IPForward"/>
+        <service name="zebra"/>
+        <service name="OSPFv3"/>
+      </services>
+    </device>
+  </devices>
+  <links>
+    <link node1="1" node2="7">
+      <iface1 id="0" name="eth0" ip4="10.0.0.20" ip4_mask="24" ip6="2001::14" ip6_mask="64"/>
+      <iface2 id="0" name="eth0" ip4="10.0.0.1" ip4_mask="24" ip6="2001::1" ip6_mask="64"/>
+      <options delay="0" bandwidth="0" loss="0.0" dup="0" jitter="0" unidirectional="0" buffer="0"/>
+    </link>
+    <link node1="2" node2="7">
+      <iface1 id="0" name="eth0" ip4="10.0.1.20" ip4_mask="24" ip6="2001:0:0:1::14" ip6_mask="64"/>
+      <iface2 id="1" name="eth1" ip4="10.0.1.1" ip4_mask="24" ip6="2001:0:0:1::1" ip6_mask="64"/>
+      <options delay="0" bandwidth="0" loss="0.0" dup="0" jitter="0" unidirectional="0" buffer="0"/>
+    </link>
+    <link node1="4" node2="7">
+      <iface1 id="0" name="eth0" ip4="10.0.2.20" ip4_mask="24" ip6="2001:0:0:2::14" ip6_mask="64"/>
+      <iface2 id="2" name="eth2" ip4="10.0.2.1" ip4_mask="24" ip6="2001:0:0:2::1" ip6_mask="64"/>
+      <options delay="0" bandwidth="0" loss="0.0" dup="0" jitter="0" unidirectional="0" buffer="0"/>
+    </link>
+    <link node1="3" node2="8">
+      <iface1 id="0" name="eth0" ip4="10.0.3.20" ip4_mask="24" ip6="2001:0:0:3::14" ip6_mask="64"/>
+      <iface2 id="0" name="eth0" ip4="10.0.3.1" ip4_mask="24" ip6="2001:0:0:3::1" ip6_mask="64"/>
+      <options delay="0" bandwidth="0" loss="0.0" dup="0" jitter="0" unidirectional="0" buffer="0"/>
+    </link>
+    <link node1="8" node2="5">
+      <iface1 id="1" name="eth1" ip4="10.0.4.1" ip4_mask="24" ip6="2001:0:0:4::1" ip6_mask="64"/>
+      <iface2 id="0" name="eth0" ip4="10.0.4.20" ip4_mask="24" ip6="2001:0:0:4::14" ip6_mask="64"/>
+      <options delay="0" bandwidth="0" loss="0.0" dup="0" jitter="0" unidirectional="0" buffer="0"/>
+    </link>
+    <link node1="8" node2="6">
+      <iface1 id="2" name="eth2" ip4="10.0.5.1" ip4_mask="24" ip6="2001:0:0:5::1" ip6_mask="64"/>
+      <iface2 id="0" name="eth0" ip4="10.0.5.20" ip4_mask="24" ip6="2001:0:0:5::14" ip6_mask="64"/>
+      <options delay="0" bandwidth="0" loss="0.0" dup="0" jitter="0" unidirectional="0" buffer="0"/>
+    </link>
+    <link node1="7" node2="8">
+      <iface1 id="3" name="eth3" ip4="10.0.6.1" ip4_mask="24" ip6="2001:0:0:6::1" ip6_mask="64"/>
+      <iface2 id="3" name="eth3" ip4="10.0.6.2" ip4_mask="24" ip6="2001:0:0:6::2" ip6_mask="64"/>
+      <options delay="0" bandwidth="0" loss="0.0" dup="0" jitter="0" unidirectional="0" buffer="0"/>
+    </link>
+  </links>
+  <session_origin lat="47.579166412353516" lon="-122.13232421875" alt="2.0" scale="150.0"/>
+  <session_options>
+    <configuration name="controlnet" value=""/>
+    <configuration name="controlnet0" value=""/>
+    <configuration name="controlnet1" value=""/>
+    <configuration name="controlnet2" value=""/>
+    <configuration name="controlnet3" value=""/>
+    <configuration name="controlnet_updown_script" value=""/>
+    <configuration name="enablerj45" value="1"/>
+    <configuration name="preservedir" value="0"/>
+    <configuration name="enablesdt" value="0"/>
+    <configuration name="sdturl" value="tcp://127.0.0.1:50000/"/>
+    <configuration name="ovs" value="0"/>
+    <configuration name="platform_id_start" value="1"/>
+    <configuration name="nem_id_start" value="1"/>
+    <configuration name="link_enabled" value="1"/>
+    <configuration name="loss_threshold" value="30"/>
+    <configuration name="link_interval" value="1"/>
+    <configuration name="link_timeout" value="4"/>
+    <configuration name="mtu" value="0"/>
+    <configuration name="checksums" value="0"/>
+  </session_options>
+  <session_metadata>
+    <configuration name="shapes" value="[]"/>
+    <configuration name="edges" value="[]"/>
+    <configuration name="hidden" value="[]"/>
+    <configuration name="canvas" value="{&quot;gridlines&quot;: true, &quot;canvases&quot;: [{&quot;id&quot;: 1, &quot;wallpaper&quot;: null, &quot;wallpaper_style&quot;: 1, &quot;fit_image&quot;: false, &quot;dimensions&quot;: [1000, 750]}]}"/>
+  </session_metadata>
+</scenario>
