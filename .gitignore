@@ -17,3 +17,6 @@ logs/
 
 # Sistema
 .DS_Store
+
+# Vídeos (movie.Mjpeg vem do ProgEx.zip)
+*.Mjpeg
