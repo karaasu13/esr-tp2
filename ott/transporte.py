@@ -195,6 +195,18 @@ class Transporte(asyncio.DatagramProtocol):
         addr = self._enderecos.get(destino)
         if addr is None:
             raise ValueError(f"destino {destino} sem endereço conhecido")
+        return self.send_to(destino, addr, tipo, corpo, fiavel, fluxo)
+
+    def send_to(
+        self,
+        destino: int,
+        addr: Endereco,
+        tipo: int,
+        corpo: dict | bytes | None = None,
+        fiavel: bool = False,
+        fluxo: tuple[int, int] = FLUXO_CONTROLO,
+    ) -> int:
+        """Envia para um endereço explícito, sem alterar a tabela de endereços."""
         dados = codificar_corpo(corpo)
         if not fiavel:
             return self._enviar(addr, destino, tipo, dados, fluxo)
