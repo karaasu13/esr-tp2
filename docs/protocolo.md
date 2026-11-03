@@ -43,7 +43,7 @@ Cabeçalho fixo de **14 bytes**, ordem de rede (`struct "!BBBHHIHB"`).
 | Código | Tipo | Fiável | Corpo | Quem trata |
 |---|---|---|---|---|
 | 0x01 | REGISTER | sim | `{}` | Inês |
-| 0x02 | REGISTER_ACK | sim | `{"id": 3, "vizinhos": [{"id": 2, "ip": "10.0.0.1"}, …]}` (proposta) | Inês |
+| 0x02 | REGISTER_ACK | sim | `{"id": 3, "vizinhos": [{"id": 2, "ip": "10.0.0.1"}, …]}` | bootstrapper |
 | 0x03 | HELLO | sim | a definir pela Inês | Inês |
 | 0x04 | HELLO_ACK | sim | a definir pela Inês | Inês |
 | 0x05 | KEEPALIVE | pede ACK, não é retransmitido | vazio | transporte |
@@ -89,6 +89,12 @@ def cb2(vizinho_id): ...
 ```
 
 Os callbacks são funções normais, não `async`, e não podem bloquear. Se precisares de esperar por alguma coisa, usa `asyncio.create_task(...)`.
+
+O bootstrapper (`python3 -m bootstrapper <config.json>`) usa o IP de origem do `REGISTER` para
+procurar o ID em `nodes` e constrói `vizinhos` a partir de `links`. Cada ligação tem de declarar
+os IDs e IPs das duas pontas; os IPs têm de estar associados aos respetivos IDs em `nodes`.
+Um IP não configurado ou uma mensagem `REGISTER` inválida é registado no log e não recebe
+`REGISTER_ACK`.
 
 ## Parâmetros
 

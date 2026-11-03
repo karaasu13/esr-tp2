@@ -79,10 +79,20 @@ bash scripts/demo-cenario1.sh            # (topologia teste1) já para uma demo 
 ```
 
 Quando o nó `ott` estiver pronto:
-
 ```bash
 python3 -m ott <ip-do-bootstrapper>
+``
+
+Para testar o registo no bootstrapper, deixa o bootstrapper a correr num nodo:
+```bash
+`python3 -m bootstrapper <config-file>`)
 ```
+e noutro executa:
+```bash
+python3 scripts/testar_bootstrapper.py <bootstrapper-IP>
+```
+O script envia o pedido e mostra o ID atribuído e os vizinhos.
+
 
 ### Cortar o link sem matar o processo
 
