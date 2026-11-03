@@ -37,11 +37,25 @@ python3 -m ott.demo_transporte --id 2 1=10.0.0.10 3=10.0.1.20   # demo no CORE
 ```
 
 Previsto:
+```
+python3 -m ott <ip-do-bootstrapper>
+```
+
+Bootstrapper:
 
 ```
 python3 -m bootstrapper configs/cenario2.json
-python3 -m ott <ip-do-bootstrapper>
 ```
+
+O bootstrapper identifica cada nó pelo IP de origem do `REGISTER` e responde com o ID e os
+vizinhos definidos em `links`. Para testar o registo num nó do CORE, corre:
+
+```
+python3 scripts/testar_bootstrapper.py <ip-do-bootstrapper>
+```
+
+Por exemplo, no N1 do cenário 2, se o bootstrapper estiver no n7:
+`python3 scripts/testar_bootstrapper.py 10.0.1.1`.
 
 Especificação do protocolo: [`docs/protocolo.md`](docs/protocolo.md).
 
