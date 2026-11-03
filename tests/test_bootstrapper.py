@@ -17,6 +17,24 @@ class TestConfiguracaoBootstrapper(unittest.TestCase):
             with self.subTest(cenario=nome):
                 self.assertTrue(carregar_configuracao(raiz / "configs" / nome).ids_por_ip)
 
+    def test_cenario2_define_vizinhos_entre_os_seis_pcs(self):
+        raiz = Path(__file__).resolve().parents[1]
+        configuracao = carregar_configuracao(raiz / "configs" / "cenario2.json")
+        esperados = {
+            1: {2},
+            2: {1, 3, 4},
+            3: {2, 4, 5},
+            4: {2, 3, 6},
+            5: {3},
+            6: {4},
+        }
+        self.assertEqual(set(configuracao.ids_por_ip.values()), set(esperados))
+        self.assertEqual(
+            {no: {v["id"] for v in vizinhos}
+             for no, vizinhos in configuracao.vizinhos_por_id.items()},
+            esperados,
+        )
+
     def test_rejeita_ligacao_com_ip_que_nao_corresponde_ao_no(self):
         dados = {
             "bootstrapper": {"host": "127.0.0.1", "port": 5000},

@@ -78,20 +78,25 @@ Voltar a correr o mesmo comando no terminal do nó. Por agora, com a demo do tra
 bash scripts/demo-cenario1.sh            # (topologia teste1) já para uma demo antiga no porto 5000
 ```
 
-Quando o nó `ott` estiver pronto:
-```bash
-python3 -m ott <ip-do-bootstrapper>
-``
+Para testar o arranque OTT no cenário 2, deixa o bootstrapper a correr no n7:
 
-Para testar o registo no bootstrapper, deixa o bootstrapper a correr num nodo:
 ```bash
-`python3 -m bootstrapper <config-file>`)
+python3 -m bootstrapper configs/cenario2.json
 ```
-e noutro executa:
+
+Em cada PC, executa o comando com o IP do n7 alcançável a partir desse PC:
+
 ```bash
-python3 scripts/testar_bootstrapper.py <bootstrapper-IP>
+S1: python3 -m ott 10.0.0.1
+N1: python3 -m ott 10.0.1.1
+N2: python3 -m ott 10.0.2.1
+N3: python3 -m ott 10.0.6.1
+C1: python3 -m ott 10.0.6.1
+C2: python3 -m ott 10.0.6.1
 ```
-O script envia o pedido e mostra o ID atribuído e os vizinhos.
+
+Confirma nos logs o ID atribuído, os vizinhos configurados e as mensagens de vizinho ativo. O
+cenário 2 liga os seis PCs entre si; os routers apenas encaminham os pacotes IP.
 
 
 ### Cortar o link sem matar o processo

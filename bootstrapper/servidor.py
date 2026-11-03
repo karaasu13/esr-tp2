@@ -125,9 +125,9 @@ class Bootstrapper:
             return
 
         vizinhos = self.configuracao.vizinhos_por_id.get(identificador, [])
-        self.transporte.set_address(0, addr)
-        self.transporte.send(
+        self.transporte.send_to(
             0,
+            addr,
             Tipo.REGISTER_ACK,
             {"id": identificador, "vizinhos": vizinhos},
             fiavel=True,
