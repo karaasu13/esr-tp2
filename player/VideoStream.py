@@ -18,6 +18,11 @@ class VideoStream:
 			self.frameNum += 1
 		return data
 		
+	def rewind(self):
+		"""Volta ao início do ficheiro. O número do frame NÃO volta a zero: continua a subir,
+		porque o player deita fora frames com número igual ou inferior ao último."""
+		self.file.seek(0)
+
 	def frameNbr(self):
 		"""Get frame number."""
 		return self.frameNum

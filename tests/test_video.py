@@ -1,6 +1,7 @@
 """Pontas do vídeo: Servidor.py -> nó (UDP local) ... nó -> player (UDP local)."""
 import asyncio
 import json
+import shutil
 import socket
 import subprocess
 import sys
@@ -60,6 +61,25 @@ class TestPontaVideo(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await receber(player), FRAMES[2])
 
 
+class TestServidorEmCiclo(unittest.IsolatedAsyncioTestCase):
+    async def test_recomeca_no_fim_com_numero_sempre_a_subir(self):
+        recetor = player_falso()
+        self.addCleanup(recetor.close)
+        pasta = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, pasta)  # registado antes do Servidor.py: só é apagado depois de ele parar
+        filme = Path(pasta) / "teste.Mjpeg"
+        filme.write_bytes(b"".join(b"%05d" % len(f) + f for f in FRAMES))
+        servidor = subprocess.Popen(
+            [sys.executable, str(RAIZ / "player" / "Servidor.py"), str(filme),
+             "127.0.0.1", str(recetor.getsockname()[1])],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.addCleanup(servidor.wait)
+        self.addCleanup(servidor.terminate)
+        pacotes = [await receber(recetor) for _ in range(2 * len(FRAMES) + 1)]
+        self.assertEqual([seq_rtp(p) for p in pacotes], list(range(1, 8)))
+        self.assertEqual([p[12:] for p in pacotes], FRAMES * 2 + FRAMES[:1])
+
+
 class TestVideoDeNoANo(unittest.IsolatedAsyncioTestCase):
     async def test_servidor_py_ate_ao_player(self):
         porta = porta_livre()
@@ -68,40 +88,41 @@ class TestVideoDeNoANo(unittest.IsolatedAsyncioTestCase):
             "nodes": {"127.0.0.1": 1, "127.0.0.2": 2},
             "links": [{"node1": 1, "ip1": "127.0.0.1", "node2": 2, "ip2": "127.0.0.2"}],
         }
-        with tempfile.TemporaryDirectory() as pasta:
-            config = Path(pasta) / "config.json"
-            config.write_text(json.dumps(dados), encoding="utf-8")
-            configuracao = carregar_configuracao(config)
-            filme = Path(pasta) / "teste.Mjpeg"  # formato do ProgEx: 5 B ASCII com o tamanho + frame
-            filme.write_bytes(b"".join(b"%05d" % len(f) + f for f in FRAMES))
+        pasta = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, pasta)  # registado antes do Servidor.py: só é apagado depois de ele parar
+        config = Path(pasta) / "config.json"
+        config.write_text(json.dumps(dados), encoding="utf-8")
+        configuracao = carregar_configuracao(config)
+        filme = Path(pasta) / "teste.Mjpeg"  # formato do ProgEx: 5 B ASCII com o tamanho + frame
+        filme.write_bytes(b"".join(b"%05d" % len(f) + f for f in FRAMES))
 
-            player = player_falso()
-            self.addCleanup(player.close)
-            bootstrapper = Bootstrapper(configuracao)
-            no_servidor = NoOTT("127.0.0.3", porta_bootstrapper=porta, host="127.0.0.1", porta=porta,
-                                portas_servidor=[0])
-            no_cliente = NoOTT("127.0.0.3", porta_bootstrapper=porta, host="127.0.0.2", porta=porta,
-                               player=player.getsockname())
-            no_servidor.destinos_locais = {2}
-            no_cliente.fluxos_player = {(1, 0)}
-            await bootstrapper.start()
-            self.addAsyncCleanup(self._fechar, bootstrapper, no_servidor, no_cliente)
-            await asyncio.gather(no_servidor.start(), no_cliente.start())
-            for _ in range(100):
-                if 2 in no_servidor._confirmados and 1 in no_cliente._confirmados:
-                    break
-                await asyncio.sleep(0.05)
+        player = player_falso()
+        self.addCleanup(player.close)
+        bootstrapper = Bootstrapper(configuracao)
+        no_servidor = NoOTT("127.0.0.3", porta_bootstrapper=porta, host="127.0.0.1", porta=porta,
+                            portas_servidor=[0])
+        no_cliente = NoOTT("127.0.0.3", porta_bootstrapper=porta, host="127.0.0.2", porta=porta,
+                           player=player.getsockname())
+        no_servidor.destinos_locais = {2}
+        no_cliente.fluxos_player = {(1, 0)}
+        await bootstrapper.start()
+        self.addAsyncCleanup(self._fechar, bootstrapper, no_servidor, no_cliente)
+        await asyncio.gather(no_servidor.start(), no_cliente.start())
+        for _ in range(100):
+            if 2 in no_servidor._confirmados and 1 in no_cliente._confirmados:
+                break
+            await asyncio.sleep(0.05)
 
-            servidor = subprocess.Popen(
-                [sys.executable, str(RAIZ / "player" / "Servidor.py"), str(filme),
-                 "127.0.0.1", str(no_servidor.video.portas[0])],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            self.addCleanup(servidor.wait)
-            self.addCleanup(servidor.terminate)
+        servidor = subprocess.Popen(
+            [sys.executable, str(RAIZ / "player" / "Servidor.py"), str(filme),
+             "127.0.0.1", str(no_servidor.video.portas[0])],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.addCleanup(servidor.wait)
+        self.addCleanup(servidor.terminate)
 
-            pacotes = [await receber(player) for _ in FRAMES]
-            self.assertEqual([p[12:] for p in pacotes], FRAMES)  # payload intacto, pela ordem
-            self.assertEqual([seq_rtp(p) for p in pacotes], [1, 2, 3])
+        pacotes = [await receber(player) for _ in FRAMES]
+        self.assertEqual([p[12:] for p in pacotes], FRAMES)  # payload intacto, pela ordem
+        self.assertEqual([seq_rtp(p) for p in pacotes], [1, 2, 3])
 
     async def test_fluxo_fora_da_lista_nao_chega_ao_player(self):
         player = player_falso()

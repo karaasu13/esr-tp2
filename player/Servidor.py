@@ -20,6 +20,10 @@ class Servidor:
 				break
 				
 			data = self.clientInfo['videoStream'].nextFrame()
+			if not data:
+				# Fim do ficheiro: recomeça (em ciclo), com o nº do frame sempre a subir.
+				self.clientInfo['videoStream'].rewind()
+				data = self.clientInfo['videoStream'].nextFrame()
 			if data:
 				frameNumber = self.clientInfo['videoStream'].frameNbr()
 				try:
