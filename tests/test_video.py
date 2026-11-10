@@ -127,6 +127,14 @@ class TestVideoReal(unittest.TestCase):
         self.assertEqual(len(frames), 500)
         self.assertTrue(all(f.startswith(b"\xff\xd8") for f in frames))  # marcador SOI do JPEG
 
+    def test_video2_tem_os_mesmos_frames_mas_outras_imagens(self):
+        originais = self._frames()
+        self.FILME = RAIZ / "videos" / "movie2.Mjpeg"
+        invertidos = self._frames()
+        self.assertEqual(len(invertidos), len(originais))
+        self.assertTrue(all(f.startswith(b"\xff\xd8") for f in invertidos))
+        self.assertTrue(all(a != b for a, b in zip(originais, invertidos)))
+
     def test_servidor_passa_do_frame_500_ao_501_com_o_inicio_do_video(self):
         sys.path.insert(0, str(RAIZ / "player"))
         self.addCleanup(sys.path.remove, str(RAIZ / "player"))

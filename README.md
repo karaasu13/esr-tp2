@@ -55,6 +55,9 @@ python3 -m ott <ip-do-bootstrapper> --player          # nó do cliente: entrega 
 python3 player/Cliente.py                             # player
 ```
 
+Para um 2.º vídeo que se distinga à vista, há o `videos/movie2.Mjpeg` (o mesmo com as cores
+invertidas): `python3 player/Servidor.py videos/movie2.Mjpeg 127.0.0.1 24001`.
+
 Enquanto não há rotas (Etapa 2), o caminho entre os nós configura-se à mão: no nó do servidor
 `--enviar-para <ID do vizinho>` e no do cliente `--ver <ID do servidor>:<vídeo>` (ex: `--ver 1:0`).
 

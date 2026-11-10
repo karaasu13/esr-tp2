@@ -18,6 +18,7 @@ logs/
 # Sistema
 .DS_Store
 
-# Vídeos: só o de teste do ProgEx (videos/movie.Mjpeg, 4,3 MB) entra no repositório
+# Vídeos: só os de teste entram no repositório (o do ProgEx e o 2.º, de cores invertidas)
 *.Mjpeg
 !videos/movie.Mjpeg
+!videos/movie2.Mjpeg
