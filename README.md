@@ -20,12 +20,28 @@ Grupo: George, Inês, Pedro
 
 ## Decisões base
 
-- Python 3, só com a biblioteca standard
+- Python 3, só com a biblioteca standard (exceto o player, que precisa do Pillow: ver "Requisitos")
 - asyncio no nó `ott`; o player corre num processo separado
 - UDP com um protocolo próprio inspirado no QUIC: um socket por nó, controlo fiável (ACK e retransmissão), vídeo sem retransmissão
 - Cabeçalho binário (`struct`), corpo das mensagens de controlo em JSON, vídeo em bytes crus
 
 O porquê de cada decisão e as alternativas estão no documento "TP2 ESR — Plano e decisões".
+
+## Requisitos
+
+O nó OTT, o bootstrapper e o `Servidor.py` só usam a biblioteca standard. O player
+(`player/Cliente.py`) precisa também do **Tkinter** e do **Pillow** (`PIL.ImageTk`), que não vêm
+com o Python. Os nós do CORE usam o Python da própria máquina, por isso basta instalar uma vez
+na máquina (ou VM) onde corre o CORE:
+
+```
+sudo apt install python3-tk python3-pil python3-pil.imagetk   # Debian/Ubuntu
+python3 -c "from PIL import ImageTk; import tkinter"          # confirma: não deve dar erro
+```
+
+Em Debian/Ubuntu o `ImageTk` vem num pacote à parte (`python3-pil.imagetk`): só com o
+`python3-pil`, o player falha com `ImportError: cannot import name 'ImageTk'`. Fora do apt,
+`pip install pillow` também serve.
 
 ## Como correr
 
