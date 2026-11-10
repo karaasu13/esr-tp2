@@ -6,8 +6,11 @@ import asyncio
 import ipaddress
 import logging
 
+from typing import Sequence
+
 from .protocolo import PORTA, Tipo, nome_tipo
 from .transporte import Endereco, Transporte
+from .video import LOCALHOST, PORTA_PLAYER, PORTA_SERVIDOR, PontaVideo
 
 log = logging.getLogger("ott")
 
@@ -21,6 +24,9 @@ class NoOTT:
         host: str = "0.0.0.0",
         porta: int = PORTA,
         porta_vizinhos: int | None = None,
+        portas_servidor: Sequence[int] = (),
+        player: Endereco | None = None,
+        host_video: str = LOCALHOST,
     ):
         self.endereco_bootstrapper = (ip_bootstrapper, porta_bootstrapper)
         self.host = host
@@ -32,10 +38,18 @@ class NoOTT:
         self._confirmados: set[int] = set()
         self._caidos: set[int] = set()
         self._registado = False
+        # Vídeo: ligações locais (UDP em localhost) ao servidor e ao player.
+        # `fluxos_player` e `destinos_locais` são provisórios: na Etapa 2 passam a ser
+        # preenchidos pelas rotas (JOIN / anúncios) em vez de configurados à mão.
+        self.video = PontaVideo(self._frame_do_servidor, portas_servidor, player, host=host_video)
+        self.fluxos_player: set[tuple[int, int]] = set()  # fluxos entregues ao player local
+        self.destinos_locais: set[int] = set()  # vizinhos a quem enviar o vídeo do servidor local
+        self.rotas_video: dict[tuple[int, int], set[int]] = {}  # fluxo -> vizinhos a jusante
 
     async def start(self, timeout: float = 15) -> None:
         self._registo = asyncio.get_running_loop().create_future()
         await self.transporte.start(self.host, self.porta)
+        await self.video.start()
         self.transporte.set_address(0, self.endereco_bootstrapper)
         self.transporte.register()
         try:
@@ -55,10 +69,11 @@ class NoOTT:
             self.close()
 
     def close(self) -> None:
+        self.video.close()
         self.transporte.close()
 
     def _receber(self, origem: int, tipo: int, corpo: dict | bytes,
-                 _fluxo: tuple[int, int], addr: Endereco) -> None:
+                 fluxo: tuple[int, int], addr: Endereco) -> None:
         if not self._registado:
             if tipo == Tipo.REGISTER_ACK:
                 self._processar_registo(origem, corpo, addr)
@@ -68,8 +83,30 @@ class NoOTT:
             self._processar_handshake(origem, tipo, corpo, addr)
             return
 
+        if tipo == Tipo.DATA and isinstance(corpo, bytes):
+            self._distribuir_video(fluxo, corpo)
+            return
+
         log.warning("[%s] mensagem %s inesperada de %s", self.transporte.id,
                     nome_tipo(tipo), addr)
+
+    # ------------------------------------------------------------ vídeo
+    def _frame_do_servidor(self, stream: int, rtp: bytes) -> None:
+        """Pacote RTP vindo do Servidor.py local: passa a ser o fluxo (meu ID, stream)."""
+        if not self._registado:
+            return  # ainda sem ID, não há fluxo para nomear
+        fluxo = (self.transporte.id, stream)
+        for destino in self.destinos_locais:
+            self.rotas_video.setdefault(fluxo, set()).add(destino)
+        self._distribuir_video(fluxo, rtp)
+
+    def _distribuir_video(self, fluxo: tuple[int, int], rtp: bytes) -> None:
+        """Entrega o pacote ao player local e/ou reenvia-o aos vizinhos a jusante."""
+        if fluxo in self.fluxos_player:
+            self.video.entregar_ao_player(rtp)
+        for vizinho in self.rotas_video.get(fluxo, ()):
+            if vizinho in self.transporte.neighbors:
+                self.transporte.send(vizinho, Tipo.DATA, rtp, fluxo=fluxo)  # sem fiabilidade
 
     def _processar_registo(self, origem: int, corpo: dict | bytes, addr: Endereco) -> None:
         if self._registo is None or self._registo.done():
@@ -166,6 +203,18 @@ def main() -> None:
     parser.add_argument("--porta", type=int, default=PORTA, help=f"porta UDP (predefinição: {PORTA})")
     parser.add_argument("--porta-local", type=int, default=PORTA,
                         help=f"porta UDP local (predefinição: {PORTA})")
+    parser.add_argument("--servidor", type=int, action="append", metavar="PORTA", nargs="?",
+                        const=PORTA_SERVIDOR, default=[],
+                        help="este nó tem servidor(es) local(is): escuta o Servidor.py em localhost "
+                             f"nesta porta (sem valor: {PORTA_SERVIDOR}); repetir para mais vídeos "
+                             "(o k-ésimo é o vídeo k)")
+    parser.add_argument("--player", type=int, nargs="?", const=PORTA_PLAYER, default=None,
+                        metavar="PORTA",
+                        help=f"entrega o vídeo ao player em localhost (sem valor: {PORTA_PLAYER})")
+    parser.add_argument("--ver", action="append", default=[], metavar="SERVIDOR:STREAM",
+                        help="(provisório, até haver rotas) fluxo a entregar ao player; ex: 1:0")
+    parser.add_argument("--enviar-para", type=int, action="append", default=[], metavar="ID",
+                        help="(provisório, até haver rotas) vizinho a quem enviar o vídeo do servidor local")
     args = parser.parse_args()
     try:
         ipaddress.ip_address(args.ip_bootstrapper)
@@ -180,8 +229,16 @@ def main() -> None:
         datefmt="%H:%M:%S",
     )
     try:
-        asyncio.run(NoOTT(args.ip_bootstrapper, porta_bootstrapper=args.porta,
-                          porta=args.porta_local).run())
+        fluxos = set()
+        for v in args.ver:
+            servidor, stream = v.split(":")
+            fluxos.add((int(servidor), int(stream)))
+        no = NoOTT(args.ip_bootstrapper, porta_bootstrapper=args.porta, porta=args.porta_local,
+                   portas_servidor=args.servidor,
+                   player=None if args.player is None else (LOCALHOST, args.player))
+        no.fluxos_player = fluxos
+        no.destinos_locais = set(args.enviar_para)
+        asyncio.run(no.run())
     except KeyboardInterrupt:
         log.info("nó OTT terminado")
     except (OSError, RuntimeError, ValueError) as exc:

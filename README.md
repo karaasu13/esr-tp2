@@ -46,6 +46,18 @@ voltam a comunicar.
 No cenário 2, se o bootstrapper estiver no n7, usa um IP alcançável desse router, por exemplo
 `python3 -m ott 10.0.1.1` no N1.
 
+### Vídeo nas pontas (UDP em localhost)
+
+```
+python3 player/Servidor.py movie.Mjpeg [ip] [porta]   # envia ao nó local, 127.0.0.1:24000 por omissão (24001 para o 2.º vídeo)
+python3 -m ott <ip-do-bootstrapper> --servidor        # nó do servidor: escuta o Servidor.py (repetir --servidor PORTA por vídeo)
+python3 -m ott <ip-do-bootstrapper> --player          # nó do cliente: entrega ao player, 127.0.0.1:25000
+python3 player/Cliente.py                             # player
+```
+
+Enquanto não há rotas (Etapa 2), o caminho entre os nós configura-se à mão: no nó do servidor
+`--enviar-para <ID do vizinho>` e no do cliente `--ver <ID do servidor>:<vídeo>` (ex: `--ver 1:0`).
+
 Especificação do protocolo: [`docs/protocolo.md`](docs/protocolo.md).
 
 ## Regras de trabalho

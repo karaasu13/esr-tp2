@@ -67,8 +67,9 @@ class Servidor:
 
 		# videoStram
 		self.clientInfo['videoStream'] = VideoStream(filename)
-		# socket (destino opcional na linha de comando; por omissão 127.0.0.1:25000)
-		self.clientInfo['rtpPort'] = int(sys.argv[3]) if len(sys.argv) > 3 else 25000
+		# socket (destino opcional na linha de comando; por omissão o nó OTT local, 127.0.0.1:24000;
+		# para o 2.º vídeo usar a porta 24001, etc. Para testar só o player, usar a porta 25000)
+		self.clientInfo['rtpPort'] = int(sys.argv[3]) if len(sys.argv) > 3 else 24000
 		self.clientInfo['rtpAddr'] = socket.gethostbyname(sys.argv[2] if len(sys.argv) > 2 else '127.0.0.1')
 		print("Sending to Addr:" + self.clientInfo['rtpAddr'] + ":" + str(self.clientInfo['rtpPort']))
 		# Create a new socket for RTP/UDP
