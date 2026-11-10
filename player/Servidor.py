@@ -1,4 +1,4 @@
-import sys, socket
+import os, sys, socket
 
 from random import randint
 import sys, traceback, threading, socket
@@ -66,7 +66,7 @@ class Servidor:
 			print("Using provided video file ->  " + filename)
 		except:
 			print("[Usage: Servidor.py <videofile> [ip] [porta]]\n")
-			filename = "movie.Mjpeg"
+			filename = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "videos", "movie.Mjpeg")
 			print("Using default video file ->  " + filename)
 
 		# videoStram

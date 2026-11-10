@@ -18,5 +18,6 @@ logs/
 # Sistema
 .DS_Store
 
-# Vídeos (movie.Mjpeg vem do ProgEx.zip)
+# Vídeos: só o de teste do ProgEx (videos/movie.Mjpeg, 4,3 MB) entra no repositório
 *.Mjpeg
+!videos/movie.Mjpeg

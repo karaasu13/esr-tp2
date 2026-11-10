@@ -3,12 +3,12 @@
 Resultados de `scripts/medir_frames.py` sobre o vídeo de teste do ProgEx.
 
 ```
-python3 scripts/medir_frames.py movie.Mjpeg
+python3 scripts/medir_frames.py videos/movie.Mjpeg
 ```
 
 ## O vídeo
 
-O `movie.Mjpeg` é uma sequência de 500 imagens JPEG independentes (frames). No ficheiro, cada frame vem precedido de 5 bytes ASCII com o seu tamanho; é assim que o `VideoStream.py` do ProgEx o lê. O `Servidor.py` envia um frame de 50 em 50 ms (20 fps), cada frame inteiro num só pacote RTP/UDP.
+O `videos/movie.Mjpeg` é uma sequência de 500 imagens JPEG independentes (frames). No ficheiro, cada frame vem precedido de 5 bytes ASCII com o seu tamanho; é assim que o `VideoStream.py` do ProgEx o lê. O `Servidor.py` envia um frame de 50 em 50 ms (20 fps), cada frame inteiro num só pacote RTP/UDP.
 
 O script lê o ficheiro da mesma forma, mas em vez de enviar os frames só regista o tamanho de cada um. **Não envia nada pela rede**: os valores de perda abaixo são uma estimativa calculada, não um teste no CORE.
 

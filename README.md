@@ -49,7 +49,7 @@ No cenário 2, se o bootstrapper estiver no n7, usa um IP alcançável desse rou
 ### Vídeo nas pontas (UDP em localhost)
 
 ```
-python3 player/Servidor.py movie.Mjpeg [ip] [porta]   # envia ao nó local, 127.0.0.1:24000 por omissão (24001 para o 2.º vídeo)
+python3 player/Servidor.py videos/movie.Mjpeg [ip] [porta]   # envia ao nó local, 127.0.0.1:24000 por omissão (24001 para o 2.º vídeo)
 python3 -m ott <ip-do-bootstrapper> --servidor        # nó do servidor: escuta o Servidor.py (repetir --servidor PORTA por vídeo)
 python3 -m ott <ip-do-bootstrapper> --player          # nó do cliente: entrega ao player, 127.0.0.1:25000
 python3 player/Cliente.py                             # player

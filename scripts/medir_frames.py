@@ -1,6 +1,6 @@
 """Mede os frames de um vídeo .Mjpeg do ProgEx e quantos fragmentos IP cada um gera.
 
-    python3 scripts/medir_frames.py movie.Mjpeg [--perda 0.2]
+    python3 scripts/medir_frames.py videos/movie.Mjpeg [--perda 0.2]
 
 Formato do ficheiro (VideoStream.py): cada frame vem precedido de 5 bytes ASCII com o seu tamanho.
 Cada frame vai num pacote: IP (20) + UDP (8) + cabeçalho overlay (14) + RTP (12) + frame.

@@ -1,5 +1,7 @@
 """Pontas do vídeo: Servidor.py -> nó (UDP local) ... nó -> player (UDP local)."""
 import asyncio
+import contextlib
+import io
 import json
 import shutil
 import socket
@@ -78,6 +80,71 @@ class TestServidorEmCiclo(unittest.IsolatedAsyncioTestCase):
         pacotes = [await receber(recetor) for _ in range(2 * len(FRAMES) + 1)]
         self.assertEqual([seq_rtp(p) for p in pacotes], list(range(1, 8)))
         self.assertEqual([p[12:] for p in pacotes], FRAMES * 2 + FRAMES[:1])
+
+
+class _SocketFalso:
+    """Guarda o que o Servidor.py enviaria, sem rede."""
+
+    def __init__(self):
+        self.enviados: list[bytes] = []
+
+    def sendto(self, dados: bytes, addr) -> None:
+        self.enviados.append(dados)
+
+    def close(self) -> None:
+        pass
+
+
+class _ParaAoFimDe:
+    """Substitui o threading.Event do Servidor.py: não espera os 50 ms e pede para parar
+    quando já foram enviados `n` pacotes. Assim os 500 frames correm em menos de 1 s."""
+
+    def __init__(self, sock: _SocketFalso, n: int):
+        self.sock, self.n = sock, n
+
+    def wait(self, _timeout: float) -> bool:
+        return False
+
+    def isSet(self) -> bool:
+        return len(self.sock.enviados) >= self.n
+
+
+class TestVideoReal(unittest.TestCase):
+    """O videos/movie.Mjpeg do ProgEx, que está no repositório."""
+
+    FILME = RAIZ / "videos" / "movie.Mjpeg"
+
+    def _frames(self) -> list[bytes]:
+        dados, frames = self.FILME.read_bytes(), []
+        while dados:
+            tamanho = int(dados[:5])
+            frames.append(dados[5:5 + tamanho])
+            dados = dados[5 + tamanho:]
+        return frames
+
+    def test_tem_500_frames_jpeg(self):
+        frames = self._frames()
+        self.assertEqual(len(frames), 500)
+        self.assertTrue(all(f.startswith(b"\xff\xd8") for f in frames))  # marcador SOI do JPEG
+
+    def test_servidor_passa_do_frame_500_ao_501_com_o_inicio_do_video(self):
+        sys.path.insert(0, str(RAIZ / "player"))
+        self.addCleanup(sys.path.remove, str(RAIZ / "player"))
+        from Servidor import Servidor
+        from VideoStream import VideoStream
+
+        sock = _SocketFalso()
+        video = VideoStream(str(self.FILME))
+        self.addCleanup(video.file.close)
+        servidor = Servidor()
+        servidor.clientInfo = {"videoStream": video, "rtpAddr": "127.0.0.1", "rtpPort": 25000,
+                               "rtpSocket": sock, "event": _ParaAoFimDe(sock, 503)}
+        with contextlib.redirect_stdout(io.StringIO()):  # o Servidor.py escreve uma linha por frame
+            servidor.sendRtp()
+
+        frames = self._frames()
+        self.assertEqual([seq_rtp(p) for p in sock.enviados], list(range(1, 504)))
+        self.assertEqual([p[12:] for p in sock.enviados], frames + frames[:3])
 
 
 class TestVideoDeNoANo(unittest.IsolatedAsyncioTestCase):
