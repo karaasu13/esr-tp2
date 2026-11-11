@@ -10,9 +10,10 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+import time
 
 from bootstrapper.servidor import Bootstrapper, carregar_configuracao
-from ott.__main__ import NoOTT
+from ott.__main__ import FluxoVideo, NoOTT
 from ott.protocolo import Tipo
 from ott.video import PontaVideo
 
@@ -156,6 +157,65 @@ class TestVideoReal(unittest.TestCase):
 
 
 class TestVideoDeNoANo(unittest.IsolatedAsyncioTestCase):
+    async def test_renova_join_sem_fiabilidade_e_expira_destino(self):
+        no = NoOTT("127.0.0.1")
+        no.transporte.set_id(1)
+        fluxo_renovado = (2, 0)
+        fluxo_expirado = (3, 0)
+        agora = time.monotonic()
+        no._registado = True
+        no.pais_video[fluxo_renovado] = 2
+        no.tabela_fluxos[fluxo_renovado] = FluxoVideo(pai=2, local=True)
+        no._ultima_renovacao[fluxo_renovado] = agora - 3
+        no.tabela_fluxos[fluxo_expirado] = FluxoVideo(destinos={4: agora - 1})
+        no.rotas_video[fluxo_expirado] = {4}
+        enviados = []
+        renovado = asyncio.Event()
+
+        def enviar(destino, tipo, _corpo, **opcoes):
+            enviados.append((destino, tipo, opcoes))
+            if tipo == Tipo.JOIN and destino == 2:
+                renovado.set()
+
+        no.transporte.send = enviar
+        tarefa = asyncio.create_task(no._ciclo_fluxos())
+        try:
+            await asyncio.wait_for(renovado.wait(), 1)
+        finally:
+            tarefa.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await tarefa
+
+        self.assertIn((2, Tipo.JOIN, {"fiavel": False, "fluxo": fluxo_renovado}), enviados)
+        self.assertNotIn(4, no.tabela_fluxos[fluxo_expirado].destinos)
+        self.assertNotIn(4, no.rotas_video[fluxo_expirado])
+
+    async def test_ping_acrescenta_o_no_e_reencaminha_para_destinos(self):
+        no = NoOTT("127.0.0.1")
+        no.transporte.set_id(2)
+        no.transporte.add_neighbor(3, ("127.0.0.3", 5000))
+        fluxo = (1, 0)
+        no._registado = True
+        no.pais_video[fluxo] = 1
+        no.tabela_fluxos[fluxo] = FluxoVideo(
+            pai=1, destinos={3: time.monotonic() + 6}
+        )
+        no.rotas_video[fluxo] = {3}
+        enviados = []
+        no.transporte.send = lambda destino, tipo, corpo, **kw: enviados.append(
+            (destino, tipo, corpo, kw)
+        )
+
+        no._receber_ping(1, fluxo, {
+            "n": 12, "caminho": [{"id": 1, "t": time.time()}],
+        })
+
+        self.assertEqual(len(enviados), 1)
+        destino, tipo, corpo, opcoes = enviados[0]
+        self.assertEqual((destino, tipo), (3, Tipo.PING))
+        self.assertEqual(opcoes["fluxo"], fluxo)
+        self.assertEqual([p["id"] for p in corpo["caminho"]], [1, 2])
+
     async def test_servidor_py_ate_ao_player(self):
         porta = porta_livre()
         dados = {
@@ -178,15 +238,12 @@ class TestVideoDeNoANo(unittest.IsolatedAsyncioTestCase):
                             portas_servidor=[0])
         no_cliente = NoOTT("127.0.0.3", porta_bootstrapper=porta, host="127.0.0.2", porta=porta,
                            player=player.getsockname())
-        no_servidor.destinos_locais = {2}
         no_cliente.fluxos_player = {(1, 0)}
         await bootstrapper.start()
         self.addAsyncCleanup(self._fechar, bootstrapper, no_servidor, no_cliente)
         await asyncio.gather(no_servidor.start(), no_cliente.start())
-        for _ in range(100):
-            if 2 in no_servidor._confirmados and 1 in no_cliente._confirmados:
-                break
-            await asyncio.sleep(0.05)
+        await asyncio.wait_for(self._esperar_handshake(no_servidor, no_cliente), 2)
+        no_cliente.definir_pai((1, 0), 1)
 
         servidor = subprocess.Popen(
             [sys.executable, str(RAIZ / "player" / "Servidor.py"), str(filme),
@@ -198,6 +255,18 @@ class TestVideoDeNoANo(unittest.IsolatedAsyncioTestCase):
         pacotes = [await receber(player) for _ in FRAMES]
         self.assertEqual([p[12:] for p in pacotes], FRAMES)  # payload intacto, pela ordem
         self.assertEqual([seq_rtp(p) for p in pacotes], [1, 2, 3])
+        no_cliente.desistir_video((1, 0))
+        await asyncio.wait_for(self._esperar_sem_destino(no_servidor, 2), 1)
+
+    @staticmethod
+    async def _esperar_handshake(no_servidor, no_cliente):
+        while 2 not in no_servidor._confirmados or 1 not in no_cliente._confirmados:
+            await asyncio.sleep(0.01)
+
+    @staticmethod
+    async def _esperar_sem_destino(no, vizinho):
+        while vizinho in no.rotas_video.get((1, 0), set()):
+            await asyncio.sleep(0.01)
 
     async def test_fluxo_fora_da_lista_nao_chega_ao_player(self):
         player = player_falso()
@@ -207,6 +276,8 @@ class TestVideoDeNoANo(unittest.IsolatedAsyncioTestCase):
         self.addAsyncCleanup(lambda: no.video.close())
         no.fluxos_player = {(1, 0)}
         no._registado = True
+        no.pais_video[(1, 0)] = 7
+        no.tabela_fluxos[(1, 0)] = FluxoVideo(pai=7, local=True)
         no._receber(7, Tipo.DATA, b"nao", (9, 0), ("127.0.0.1", 5000))
         no._receber(7, Tipo.DATA, b"sim", (1, 0), ("127.0.0.1", 5000))
         self.assertEqual(await receber(player), b"sim")

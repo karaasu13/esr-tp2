@@ -35,7 +35,10 @@ class Tipo(IntEnum):
     KEEPALIVE = 0x05
     ACK = 0x06
     CLOSE = 0x07
-    # 0x10–0x1F: reservados para as rotas (Etapa 2)
+    # 0x10–0x1F: mensagens de gestão de fluxos e rotas
+    JOIN = 0x11
+    LEAVE = 0x12
+    PING = 0x14
     DATA = 0x20
 
 

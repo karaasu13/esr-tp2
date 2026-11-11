@@ -44,13 +44,41 @@ Cabeçalho fixo de **14 bytes**, ordem de rede (`struct "!BBBHHIHB"`).
 |---|---|---|---|---|
 | 0x01 | REGISTER | sim | `{}` | Inês |
 | 0x02 | REGISTER_ACK | sim | `{"id": 3, "vizinhos": [{"id": 2, "ip": "10.0.0.1"}, …]}` | bootstrapper |
-| 0x03 | HELLO | sim | a definir pela Inês | Inês |
-| 0x04 | HELLO_ACK | sim | a definir pela Inês | Inês |
+| 0x03 | HELLO | sim | `{}` | handshake de vizinhos |
+| 0x04 | HELLO_ACK | sim | `{}` | handshake de vizinhos |
 | 0x05 | KEEPALIVE | pede ACK, não é retransmitido | vazio | transporte |
 | 0x06 | ACK | não | pn confirmado, 4 B binário | transporte |
-| 0x07 | CLOSE | sim | saída avisada (por implementar) | — |
-| 0x10–0x1F | reservados para as rotas (Etapa 2) | | | |
+| 0x07 | CLOSE | sim | `{}` | nó vizinho |
+| 0x11 | JOIN | sim no pedido inicial; não nas renovações | vazio; fluxo no cabeçalho | gestão de fluxos |
+| 0x12 | LEAVE | sim | vazio; fluxo no cabeçalho | gestão de fluxos |
+| 0x14 | PING | não | número e caminho acumulado | teste do caminho |
 | 0x20 | DATA | não | bytes do vídeo | streaming |
+
+## Saída e recuperação de vizinhos
+
+No encerramento gracioso, o nó envia `CLOSE` fiável aos vizinhos e aguarda os ACKs até
+1 segundo. O recetor remove imediatamente o vizinho e o estado de fluxos associado; se o
+aviso se perder, continua a valer o idle timeout normal.
+
+Quando o transporte declara um vizinho em baixo, o nó tenta restabelecer o contacto com
+`HELLO` após 5, 10, 20, 40 e 60 segundos, repetindo depois de 60 em 60 segundos. Não há
+tentativas periódicas no arranque: nessa altura cada nó apresenta-se por iniciativa própria.
+Um `HELLO` novo de um vizinho já confirmado limpa o estado anterior desse vizinho, tratando-o
+como um reinício rápido.
+
+## Gestão e encaminhamento de fluxos
+
+Cada fluxo mantém o pai, os vizinhos que pediram o vídeo e um estado ativo/inativo. O primeiro
+pedido local ou de um descendente propaga um `JOIN` fiável ao pai; os pedidos são renovados
+sem fiabilidade de 2 em 2 segundos. Um destino que não renove durante 6 segundos é removido,
+tal como se tivesse enviado `LEAVE`. Quando o último destino sai, o nó envia `LEAVE` ao pai.
+O encaminhamento dos anúncios e a escolha automática do pai ainda não estão implementados;
+`NoOTT.definir_pai()` é o ponto de integração para essa lógica.
+
+Um nó só aceita `DATA` e `PING` do pai registado para o fluxo. Reencaminha-os para os destinos
+ativos; `DATA` entrega o pacote RTP intacto ao player local. O servidor envia um `PING` por
+fluxo ativo a cada 5 segundos. Cada nó acrescenta o seu ID e hora ao caminho e regista-o no
+log. O formato de `DATA` continua a ser o pacote RTP sem a hora extra que consta da proposta.
 
 ## Fiabilidade
 
@@ -152,5 +180,5 @@ Os termos técnicos deste documento, em palavras simples. A explicação de cada
 | **ARP** | Protocolo que descobre o endereço da placa de rede (MAC) de um IP. Enquanto não tem resposta, os pacotes ficam retidos. |
 | **MTU** | Tamanho máximo de um pacote num link (1500 B). Um pacote maior é partido em fragmentos. |
 | **Inundação controlada** | Enviar uma mensagem a todos os vizinhos, que a passam aos deles, deitando fora as repetidas. |
-| **JOIN** | Proposta para a Etapa 2: pedido de um cliente para receber um fluxo, enviado na direção do servidor. |
+| **JOIN** | Pedido para receber um fluxo, enviado ao pai e renovado periodicamente. |
 | **CORE** | O emulador de redes onde corremos os testes. |

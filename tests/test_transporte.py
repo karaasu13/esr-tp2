@@ -12,6 +12,12 @@ class TestPacote(unittest.TestCase):
     def test_cabecalho_tem_14_bytes(self):
         self.assertEqual(CABECALHO.size, 14)
 
+    def test_codigos_das_mensagens_de_fluxo(self):
+        self.assertEqual(Tipo.CLOSE, 0x07)
+        self.assertEqual(Tipo.JOIN, 0x11)
+        self.assertEqual(Tipo.LEAVE, 0x12)
+        self.assertEqual(Tipo.PING, 0x14)
+
     def test_ida_e_volta(self):
         for p in [
             Pacote(Tipo.HELLO, 3, 5, 42, (0, 0), Flag.FIAVEL, 40, b'{"a":1}'),

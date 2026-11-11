@@ -48,7 +48,7 @@ Em Debian/Ubuntu o `ImageTk` vem num pacote à parte (`python3-pil.imagetk`): s�
 Já existe:
 
 ```
-python3 -m unittest -v                                      # testes do transporte
+python3 -m unittest -v                                      # testes automáticos
 python3 -m ott.demo_transporte --id 2 1=10.0.0.10 3=10.0.1.20   # demo no CORE
 python3 -m bootstrapper configs/cenario2.json               # bootstrapper
 python3 -m ott <ip-do-bootstrapper>                         # nó OTT
@@ -74,8 +74,10 @@ python3 player/Cliente.py                             # player
 Para um 2.º vídeo que se distinga à vista, há o `videos/movie2.Mjpeg` (o mesmo com as cores
 invertidas): `python3 player/Servidor.py videos/movie2.Mjpeg 127.0.0.1 24001`.
 
-Enquanto não há rotas (Etapa 2), o caminho entre os nós configura-se à mão: no nó do servidor
-`--enviar-para <ID do vizinho>` e no do cliente `--ver <ID do servidor>:<vídeo>` (ex: `--ver 1:0`).
+O pedido local de vídeo pode ser indicado com `--ver <ID do servidor>:<vídeo>` (ex: `--ver 1:0`).
+O código já mantém a tabela de fluxos, trata `JOIN`/`LEAVE` e só aceita vídeo do pai registado,
+mas a descoberta automática de rotas e a escolha do pai ainda estão por integrar; sem isso,
+`--ver` não inicia sozinho o pedido pela rede.
 
 Especificação do protocolo: [`docs/protocolo.md`](docs/protocolo.md).
 
