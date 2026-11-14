@@ -158,10 +158,11 @@ As datas são indicativas e têm de ser ajustadas quando soubermos o dia da entr
 
 ## 6. Tarefas de cada um (atualizado a 14/11)
 
-Cada tarefa vai num ramo próprio do git e entra por *pull request* (o pedido para juntar o ramo ao código principal, depois de outro o ver). Ninguém envia direto para a `main`. **Entre 10 e 11/11 os 8 commits entraram todos direto na `main`.**
+Cada pessoa trabalha num ramo seu do git (ex: `george/rotas`) e junta-o à `main` quando estiver testado. Antes de continuar a trabalhar, junta a `main` ao seu ramo, para os conflitos não se acumularem. **Entre 10 e 11/11 os 8 commits entraram todos direto na `main`.**
 
 ### George: transporte e escolha de caminhos
 
+- [ ] **Juntar o estado dos fluxos num só sítio** (passou da Inês para o George, a 14/11, porque os anúncios mexem nesse código). Hoje o pai de cada vídeo está guardado em dois sítios (`tabela_fluxos` e `pais_video`) e os destinos também (`tabela_fluxos` e `rotas_video`), e o código tem de os manter iguais à mão. Fica só a `tabela_fluxos`.
 - [ ] **Anúncios, versão mínima** (primeiro, porque trava o resto): o servidor anuncia-se de 2 em 2 s; cada nó guarda o último anúncio de cada vizinho, escolhe o pai pelo custo mais baixo, chama `definir_pai` para cada vídeo desse servidor e passa o anúncio aos outros vizinhos. Custo, para começar: o tempo de ida e volta que o transporte já mede, mais 1 por salto. Mais a opção `--ver` do cliente passar a pedir o vídeo assim que houver pai.
 - [ ] Reservar no `ott/protocolo.py` os códigos que faltam: ANNOUNCE (0x10) e WITHDRAW (0x13). O JOIN, o LEAVE e o PING já lá estão.
 - [ ] Tirar a função `keepalive()` fiável do `ott/transporte.py`.
@@ -175,7 +176,6 @@ Cada tarefa vai num ramo próprio do git e entra por *pull request* (o pedido pa
 - [x] Novas tentativas de ligação a vizinhos em baixo (5, 10, 20, 40 e 60 s, depois de minuto a minuto).
 - [x] Reinício rápido: um HELLO novo de um vizinho já confirmado limpa o estado dele.
 - [x] Tabela de fluxos, JOIN e LEAVE com renovação, vídeo e PING só aceites do pai.
-- [ ] Juntar o estado dos fluxos num só sítio. Hoje o pai de cada vídeo está guardado em dois sítios (`tabela_fluxos` e `pais_video`) e os destinos também (`tabela_fluxos` e `rotas_video`), e o código tem de os manter iguais à mão. Convém resolver antes de os anúncios começarem a mexer no pai.
 - [ ] Depois de um CLOSE, não voltar a tentar ligar ao vizinho que saiu. Hoje o nó continua a mandar-lhe HELLO de minuto a minuto, e quando o vizinho voltar é ele que se apresenta.
 - [ ] Teste de integração no cenário 2, com prints (com o George, quando houver anúncios).
 
@@ -292,7 +292,7 @@ Em cada item da avaliação conta a qualidade dos testes e do nosso espírito cr
 
 ## 10. Regras de trabalho
 
-- **Git:** cada tarefa num ramo próprio (ex: `ines/fluxos`), entregue por *pull request*. Fazer `git pull` antes de começar.
+- **Git:** um ramo por pessoa (ex: `ines/fluxos`), juntado à `main` quando estiver testado. Antes de continuar a trabalhar, juntar a `main` ao ramo.
 - **Não vão para o git:** capturas de rede e logs. Os dois vídeos de teste estão em `videos/` (decidido pelo Pedro a 10/11, para os nós do CORE os terem à mão); outros vídeos não entram.
 - **Prints:** vão para `tp2/relatorio/evidencias/`, com nomes do tipo `E2_03_<o-que-mostra>.png`, e cada um leva caixa nos valores que o texto usa.
 - **Perda nos testes:** aplica-se com o comando `tc` nas duas pontas da ligação, porque no nosso caso o diálogo do CORE não a aplicou. Os comandos estão em `docs/testes.md`, no repositório.
@@ -329,5 +329,5 @@ Em cada item da avaliação conta a qualidade dos testes e do nosso espírito cr
 | **PIM** | Protocolo com que os routers encaminham multicast (um envio para um grupo de interessados). |
 | **CORE** | O emulador de redes onde corremos os testes. |
 | **tc** | Comando do Linux que simula perda ou atraso numa ligação. |
-| **Ramo / pull request** | No git, um ramo é uma linha de trabalho separada. O *pull request* é o pedido para a juntar ao código principal. |
+| **Ramo / merge** | No git, um ramo é uma linha de trabalho separada. O merge junta esse trabalho ao código principal (a `main`). |
 | **LNCS** | Modelo de artigo da editora Springer, recomendado para o relatório. |
