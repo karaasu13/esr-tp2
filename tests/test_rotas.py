@@ -1,6 +1,7 @@
 """Anúncios e escolha do pai (ott/rotas.py), sozinhos e no cenário 2 em localhost."""
 import asyncio
 import json
+import random
 import tempfile
 import time
 import unittest
@@ -26,11 +27,19 @@ class TransporteFalso:
     def __init__(self, vizinhos, rtts):
         self.id = 1
         self.neighbors = vizinhos
-        self._rtts = rtts
+        self.rtts = rtts  # segundos
+        self.jitters = {}  # segundos
+        self.perdas = {}  # fração
         self.enviados = []
 
-    def rtt(self, no):
-        return self._rtts.get(no)
+    def rtt_min(self, no):
+        return self.rtts.get(no)
+
+    def jitter(self, no):
+        return self.jitters.get(no)
+
+    def perda(self, no):
+        return self.perdas.get(no)
 
     def send(self, destino, tipo, corpo=None, fiavel=False, fluxo=(0, 0)):
         self.enviados.append((destino, tipo, corpo, fiavel))
@@ -115,6 +124,60 @@ class TestRotas(unittest.TestCase):
         self.assertEqual(self.mudancas, [(9, 2), (9, 4), (9, None)])
 
 
+class TestTrocaComMargem(unittest.TestCase):
+    """Custo com as quatro medidas e troca por um vizinho claramente melhor."""
+
+    def setUp(self):
+        self.transporte = TransporteFalso([2, 3, 4], {2: 0.001, 3: 0.002, 4: 0.002})
+        self.mudancas = []
+        self.rotas = Rotas(self.transporte, lambda srv, pai: self.mudancas.append((srv, pai)))
+
+    def test_custo_soma_as_quatro_medidas_e_le_anuncios_antigos(self):
+        self.transporte.jitters[2] = 0.0005
+        self.transporte.perdas[2] = 0.01
+        self.rotas.receber(2, {"srv": 9, "ronda": 10, "videos": [0], "rtt": 3.0, "saltos": 1,
+                               "jitter": 0.5, "perda": 1.0})
+        # (3 + 1) ms de RTT + (0,5 + 0,5) ms de jitter + 20 x (1 + 1)% + 2 saltos
+        self.assertAlmostEqual(self.rotas.servidores[9].anuncios[2].custo, 4 + 1 + 40 + 2)
+        self.rotas.receber(3, anuncio(10))  # sem jitter nem perda: contam como 0
+        self.assertAlmostEqual(self.rotas.servidores[9].anuncios[3].custo, 3.0)
+
+    def test_perda_numa_ligacao_faz_a_rota_mudar(self):
+        rotas, transporte = self.rotas, self.transporte
+        rotas.receber(2, anuncio(10))  # custo 2
+        rotas.receber(3, anuncio(10))  # custo 3: não ganha pela margem
+        self.assertEqual(rotas.pai(9), 2)
+        transporte.perdas[2] = 0.05  # 5% de perda: +100 no custo da ligação ao 2
+        rotas.receber(2, anuncio(11))
+        rotas.receber(3, anuncio(11))
+        self.assertEqual(rotas.pai(9), 3)
+        self.assertEqual(self.mudancas, [(9, 2), (9, 3)])
+
+    def test_custos_parecidos_nao_ficam_a_trocar(self):
+        rotas, transporte = self.rotas, self.transporte
+        sorte = random.Random(1)
+        for ronda in range(100, 115):  # 15 rondas de 2 s = 30 s simulados
+            for vizinho in sorte.sample([2, 3], 2):  # ordem de chegada ao acaso
+                # 10 ms ± 5% e até 0,5 ms de jitter: diferenças até 1,5, abaixo da margem de 2.
+                # A ordem e as medidas mudam a cada ronda: sem margem, trocaria várias vezes.
+                transporte.rtts[vizinho] = sorte.uniform(0.0095, 0.0105)
+                transporte.jitters[vizinho] = sorte.uniform(0.0, 0.0005)
+                rotas.receber(vizinho, anuncio(ronda, rtt=4.0, saltos=1))
+        self.assertEqual(len(self.mudancas), 1)  # só a primeira escolha
+
+    def test_troca_por_um_melhor_nunca_escolhe_um_nao_viavel(self):
+        rotas, transporte = self.rotas, self.transporte
+        rotas.receber(2, anuncio(10))  # pai 2: anuncio a ronda 10 com custo 2
+        transporte.perdas[2] = 0.05
+        rotas.receber(2, anuncio(10))  # a ligação ao pai piorou: custo 102 na mesma ronda
+        # O 4 recebe através de mim: anuncia 3,5 na ronda 10, mais do que os 2 que anunciei.
+        # Ir por ele custaria 6,5 (passa a margem), mas não é viável.
+        rotas.receber(4, anuncio(10, rtt=1.5, saltos=2))
+        self.assertAlmostEqual(rotas.servidores[9].anuncios[4].custo, 6.5)
+        self.assertEqual(rotas.pai(9), 2)
+        self.assertEqual(self.mudancas, [(9, 2)])
+
+
 class RedeFalsa:
     """Vários Rotas ligados em memória. As mensagens vão para uma fila e são entregues por
     ordem de envio, como numa rede em que todas as ligações têm o mesmo atraso."""
@@ -137,8 +200,14 @@ class RedeFalsa:
             def neighbors(self):
                 return sorted(b for a, b in rede.rtt if a == no)
 
-            def rtt(self, outro):
+            def rtt_min(self, outro):
                 return rede.rtt.get((no, outro))
+
+            def jitter(self, outro):
+                return None
+
+            def perda(self, outro):
+                return None
 
             def send(self, destino, tipo, corpo=None, fiavel=False, fluxo=(0, 0)):
                 if (no, destino) in rede.rtt:

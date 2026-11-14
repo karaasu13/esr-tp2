@@ -49,7 +49,7 @@ Cabeçalho fixo de **14 bytes**, ordem de rede (`struct "!BBBHHIHB"`).
 | 0x05 | KEEPALIVE | pede ACK, não é retransmitido | vazio | transporte |
 | 0x06 | ACK | não | pn confirmado, 4 B binário | transporte |
 | 0x07 | CLOSE | sim | `{}` | nó vizinho |
-| 0x10 | ANNOUNCE | não | `{"srv": 1, "ronda": 1731600000, "videos": [0], "rtt": 2.0, "saltos": 1}` | escolha de caminhos |
+| 0x10 | ANNOUNCE | não | `{"srv": 1, "ronda": 1731600000, "videos": [0], "rtt": 2.0, "jitter": 0.1, "perda": 0.0, "saltos": 1}` | escolha de caminhos |
 | 0x11 | JOIN | sim no pedido inicial; não nas renovações | vazio; fluxo no cabeçalho | gestão de fluxos |
 | 0x12 | LEAVE | sim | vazio; fluxo no cabeçalho | gestão de fluxos |
 | 0x13 | WITHDRAW | (reservado) | (por definir) | escolha de caminhos |
@@ -90,39 +90,52 @@ Corpo do `ANNOUNCE` (JSON, não fiável):
 | `srv` | ID do nó do servidor |
 | `ronda` | Número do anúncio. Começa em `int(time.time())` e o servidor soma 1 em cada anúncio |
 | `videos` | Lista dos números dos vídeos do servidor (ex: `[0, 1]`) |
-| `rtt` | Soma dos RTT, em ms, do servidor até quem envia o anúncio (0 no servidor) |
+| `rtt` | Soma dos RTT mínimos, em ms, do servidor até quem envia o anúncio (0 no servidor) |
+| `jitter` | Soma dos jitters, em ms, no mesmo caminho (0 no servidor; se faltar, conta como 0) |
+| `perda` | Soma das perdas, em %, no mesmo caminho (0 no servidor; se faltar, conta como 0) |
 | `saltos` | Número de ligações do servidor até quem envia o anúncio (0 no servidor) |
+
+As quatro medidas vão em separado e cada nó aplica a fórmula do custo, que está numa só função
+(`custo()` em `ott/rotas.py`). Para mudar os pesos não é preciso mudar o formato da mensagem:
+
+```
+custo = rtt (ms) + jitter (ms) + 20 × perda (%) + saltos
+```
+
+Como é uma soma, serve para uma ligação (`rtt_min + jitter + 20 × perda + 1`) e para o caminho
+inteiro (a soma das ligações).
 
 - O nó com `--servidor` envia um `ANNOUNCE` a todos os vizinhos de 2 em 2 s (±10% ao acaso).
 - Quem recebe só aceita anúncios de vizinhos confirmados. Deita fora rondas mais antigas do que
   a última desse vizinho para esse servidor e anúncios com mais de 16 saltos.
-- Guarda o último anúncio de cada vizinho, por servidor, já somada a ligação:
-  `rtt + RTT da ligação em ms` (100 ms se ainda não houver RTT) e `saltos + 1`.
-  O custo por esse vizinho é `rtt + saltos`, ou seja, o custo anunciado mais `RTT da ligação + 1`.
+- Guarda o último anúncio de cada vizinho, por servidor, já somadas as medidas da ligação a esse
+  vizinho (`rtt_min`, `jitter` e `perda` do transporte, e 1 salto). Sem medições usa 100 ms de
+  RTT e 0 de jitter e perda. O custo por esse vizinho é o custo anunciado mais o da ligação.
 - Sem pai, fica com o vizinho de custo mais baixo entre os **viáveis** (regra abaixo).
 - O anúncio de um vizinho vale 6 s (3 períodos). Se não for renovado, é apagado. Se não sobrar
   nenhum anúncio para um servidor, a rota para ele desaparece; quando o servidor deixa de
   anunciar, isto acontece em toda a rede.
-- Só troca de pai se o pai cair (idle timeout, `CLOSE` ou reinício) ou se o anúncio dele
-  expirar. Nesse caso passa logo ao vizinho viável mais barato. Se não houver nenhum, fica sem
-  pai até chegar um anúncio viável (em geral, de uma ronda mais nova do que a última que anunciou).
+- Se o pai cair (idle timeout, `CLOSE` ou reinício) ou o anúncio dele expirar, passa logo ao
+  vizinho viável mais barato. Se não houver nenhum, fica sem pai até chegar um anúncio viável
+  (em geral, de uma ronda mais nova do que a última que anunciou).
+- **Troca por um vizinho melhor**, com o pai vivo: só se o custo por esse vizinho for mais baixo
+  em mais de **15%** e em mais de **2 unidades**, comparando anúncios **da mesma ronda** do pai,
+  e só se o vizinho for viável. A margem evita trocas a toda a hora entre caminhos parecidos. Também
+  corrige o arranque: um nó que ficou com um pai pior, por o primeiro anúncio ter vindo pelo
+  caminho longo, passa ao melhor na ronda seguinte.
 - **Regra anti-ciclo (viabilidade), em todas as escolhas de pai.** Um vizinho só pode ser pai se
   o anúncio dele for de uma ronda mais nova do que a última que este nó anunciou, ou da mesma
-  ronda com um custo anunciado (`rtt + saltos` do corpo) menor do que o menor custo que este nó
+  ronda com um custo anunciado (a fórmula aplicada ao corpo) menor do que o menor custo que este nó
   anunciou nessa ronda. Quem recebe o fluxo através deste nó só conhece rondas que este nó já
   anunciou e anuncia sempre mais (soma pelo menos uma ligação e 1 salto), por isso nunca é
   viável: não se formam ciclos. É a condição de viabilidade do Babel (RFC 8966) e do EIGRP.
 - Quando escolhe um pai ou recebe uma ronda nova do pai, anuncia a todos os vizinhos menos ao
-  pai, com a ronda do pai e o seu próprio `rtt` e `saltos`.
+  pai, com a ronda do pai e as suas próprias medidas acumuladas.
 - Quando o pai de um servidor muda, chama `definir_pai` para cada vídeo desse servidor que está
   na tabela de fluxos ou foi pedido pelo player local (`--ver`): o `JOIN` sobe sozinho para o
   pai novo. Sem pai, chama `definir_pai(fluxo, None)`.
-- No log: `[id] pai para o servidor S: V (custo X)`.
-
-Ainda não há margem para trocar de pai, regra anti-ciclo nem `WITHDRAW` (passos 3 e 4 da
-secção 14 de `docs/desenho-rotas-e-video.md`). Sem a regra anti-ciclo, quando um nó perde a
-única ligação ao servidor, dois vizinhos podem escolher-se um ao outro até os anúncios
-expirarem (6 s), ou até o limite de 16 saltos cortar um ciclo maior.
+- No log: `[id] pai para o servidor S: V (custo X)`, com o motivo entre parênteses quando é uma
+  troca (ex: `(melhor do que 2, custo 102.0)` ou `(vizinho 2 em baixo)`).
 
 ## Fiabilidade
 
