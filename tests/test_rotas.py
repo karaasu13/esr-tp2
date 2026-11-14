@@ -507,8 +507,9 @@ class TestCenario2(unittest.IsolatedAsyncioTestCase):
 @patch.object(ott_rotas, "VALIDADE_ANUNCIO", 0.6)
 class TestDoisServidores(unittest.IsolatedAsyncioTestCase):
     """S1 - A - B - S2, com C1 ligado ao A e C2 ao B; os clientes pedem só o vídeo 0 (--ver 0).
-    Medidas fixas: todas as ligações a 0 ms, menos A-B com 25 ms. Pelo lado de cada cliente o
-    servidor mais perto custa 2 e o outro 28."""
+    Medidas fixas: todas as ligações a 0 ms, menos A-B com 0,5 ms. Pelo lado de cada cliente o
+    servidor mais perto custa 2 e o outro 3,5: a diferença não passa a margem, por isso só a
+    espera antes da 1.ª escolha evita que o cliente fique com o servidor que arrancou primeiro."""
 
     S1, A, B, S2, C1, C2 = 1, 2, 3, 4, 5, 6
     LIGACOES = [(1, 2), (2, 3), (3, 4), (2, 5), (3, 6)]
@@ -543,7 +544,7 @@ class TestDoisServidores(unittest.IsolatedAsyncioTestCase):
             nos[cliente].videos_pedidos = {0}  # como --ver 0
         for no, t in nos.items():
             vizinhos = [b for a, b in self.LIGACOES if a == no] + [a for a, b in self.LIGACOES if b == no]
-            TestCenario2._fixar_medidas(t, {v: (0.025 if {no, v} == {A, B} else 0.0, 0.0)
+            TestCenario2._fixar_medidas(t, {v: (0.0005 if {no, v} == {A, B} else 0.0, 0.0)
                                             for v in vizinhos})
         self.addAsyncCleanup(TestCenario2._fechar, bootstrapper, *nos.values())
 
@@ -552,7 +553,9 @@ class TestDoisServidores(unittest.IsolatedAsyncioTestCase):
         await TestCenario2._esperar(lambda: all(
             b in nos[a]._confirmados and a in nos[b]._confirmados
             for a, b in self.LIGACOES if not {a, b} & {S1, S2}))
-        await asyncio.gather(nos[S1].start(), nos[S2].start())
+        await nos[S1].start()
+        await asyncio.sleep(0.3)  # o S2 arranca depois (menos do que a espera de 2 rondas)
+        await nos[S2].start()
         return nos
 
     async def test_cada_cliente_fica_com_o_mais_barato_e_troca_quando_o_seu_para(self):

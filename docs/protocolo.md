@@ -127,7 +127,8 @@ inteiro (a soma das ligações).
   isso a troca dá-se entre 0,3 e 0,55 s depois do último frame.
 - **Servidor mais perto (só no cliente, `--ver k`).** Os servidores têm os mesmos vídeos pela
   mesma ordem. O cliente pede o vídeo k ao servidor com rota mais barata entre os que o
-  anunciam em `videos`. Se esse servidor ficar sem rota (pai `None`), passa para o outro, se
+  anunciam em `videos`. Na 1.ª escolha espera duas rondas (4 s) depois da 1.ª rota, para ouvir
+  todos os servidores. Se esse servidor ficar sem rota (pai `None`), passa para o outro, se
   houver rota (`LEAVE` do fluxo antigo, `JOIN` do novo); se o primeiro voltar e for mais barato
   pela margem (15% e 2 unidades), volta para ele. O fluxo no cabeçalho continua a ser
   (servidor, vídeo): os outros nós não mudam. No log: `vídeo k: servidor S (custo X)`.

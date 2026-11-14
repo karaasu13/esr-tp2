@@ -86,10 +86,10 @@ case "$CENARIO" in
     no "$c" "python3 player/Cliente.py" player
     no "$c" "python3 -m ott $BOOT --player --ver 0"
   done
-  for s in S1 S2; do
-    no "$s" "python3 player/Servidor.py videos/movie.Mjpeg" video
-    no "$s" "python3 -m ott $BOOT --servidor"
-  done
+  no S1 "python3 player/Servidor.py videos/movie.Mjpeg" video
+  no S2 "python3 player/Servidor.py videos/movie.Mjpeg" video
+  no S1 "python3 -m ott $BOOT --servidor"
+  no S2 "python3 -m ott $BOOT --servidor"
   ;;
 *)
   echo "Uso: sudo -E bash $0 2|3" >&2

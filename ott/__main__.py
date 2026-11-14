@@ -10,6 +10,7 @@ import time
 from typing import Sequence
 
 from .protocolo import PORTA, Tipo, nome_tipo
+from . import rotas as modulo_rotas
 from .rotas import Rotas, melhor_pela_margem
 from .transporte import Endereco, Transporte
 from .video import LOCALHOST, PORTA_PLAYER, PORTA_SERVIDOR, PontaVideo
@@ -65,6 +66,7 @@ class NoOTT:
         # --ver k: vídeos pedidos ao servidor mais barato, e o servidor escolhido para cada um
         self.videos_pedidos: set[int] = set()
         self._servidor_do_video: dict[int, int] = {}
+        self._primeira_rota_do_video: dict[int, float] = {}  # quando apareceu a 1.ª opção
         self.tabela_fluxos: dict[tuple[int, int], FluxoVideo] = {}  # pai e destinos de cada fluxo
         self.rotas = Rotas(self.transporte, self._pai_mudou)  # escolhe o pai de cada servidor
         self._hellos_recebidos: set[int] = set()
@@ -265,6 +267,12 @@ class NoOTT:
                 continue  # sem rota para nenhum: fica com o atual até alguém voltar
             melhor = min(opcoes, key=opcoes.get)
             atual = self._servidor_do_video.get(video)
+            if atual is None:
+                # 1.ª escolha: espera duas rondas para ouvir todos os servidores. Senão ficava
+                # com o primeiro a chegar, e o mais perto quase nunca ganha pela margem.
+                inicio = self._primeira_rota_do_video.setdefault(video, time.monotonic())
+                if time.monotonic() - inicio < 2 * modulo_rotas.PERIODO_ANUNCIO:
+                    continue
             if melhor == atual or (atual in opcoes
                                    and not melhor_pela_margem(opcoes[melhor], opcoes[atual])):
                 continue
