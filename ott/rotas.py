@@ -7,14 +7,21 @@ Passos 1 e 2 da secção 14 de docs/desenho-rotas-e-video.md:
   * o anúncio de um vizinho vale VALIDADE_ANUNCIO; sem renovação é apagado, e sem anúncios
     a rota para o servidor desaparece;
   * só troca de pai se o pai cair ou o anúncio dele expirar: passa logo ao mais barato dos
-    vizinhos com anúncio da ronda mais recente;
+    vizinhos viáveis; se não houver nenhum, fica sem pai até chegar uma ronda mais nova;
   * quando a rota muda, anuncia-a a todos os vizinhos menos ao pai.
-Ainda não há margem para trocar, regra anti-ciclo nem WITHDRAW.
+
+Regra anti-ciclo (condição de viabilidade do Babel e do EIGRP), aplicada a TODAS as escolhas de
+pai: um vizinho só pode ser pai se o anúncio dele for de uma ronda mais nova do que a última que
+este nó anunciou, ou da mesma ronda com um custo anunciado menor do que o menor custo que este nó
+anunciou nessa ronda. Quem recebe através deste nó só conhece rondas que este nó já anunciou, e
+anuncia sempre mais (soma pelo menos uma ligação e mais 1 salto), por isso nunca é viável.
+Ainda não há margem para trocar nem WITHDRAW.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import random
 import time
 from dataclasses import dataclass, field
@@ -42,6 +49,7 @@ class Anuncio:
     videos: list[int]
     rtt: float  # ms, soma dos RTT do servidor até este nó, por este vizinho
     saltos: int
+    anunciado: float  # o custo que o vizinho anunciou (rtt + saltos dele), para a regra anti-ciclo
     recebido: float = field(default_factory=time.monotonic)
 
     @property
@@ -53,7 +61,13 @@ class Anuncio:
 class RotaServidor:
     anuncios: dict[int, Anuncio] = field(default_factory=dict)  # vizinho -> último anúncio
     pai: int | None = None
-    ronda: int = 0  # ronda mais nova já anunciada; sem pai, só serve um anúncio mais novo
+    ronda: int = 0  # ronda mais nova que este nó já anunciou
+    custo_anunciado: float = math.inf  # menor custo que este nó anunciou nessa ronda
+
+    def viavel(self, anuncio: "Anuncio") -> bool:
+        """Pode ser pai sem risco de ciclo (ver a regra no início do módulo)."""
+        return anuncio.ronda > self.ronda or (
+            anuncio.ronda == self.ronda and anuncio.anunciado < self.custo_anunciado)
 
 
 def _inteiro(valor: Any) -> bool:
@@ -99,11 +113,11 @@ class Rotas:
             return
         rtt_ligacao = self.transporte.rtt(origem)
         ms = RTT_DESCONHECIDO_MS if rtt_ligacao is None else rtt_ligacao * 1000
-        rota.anuncios[origem] = Anuncio(ronda, videos, rtt + ms, saltos + 1)
+        rota.anuncios[origem] = Anuncio(ronda, videos, rtt + ms, saltos + 1, anunciado=rtt + saltos)
 
         if rota.pai is None:
-            # Sem pai e sem alternativa quando o anterior caiu: espera por uma ronda mais nova.
-            candidatos = [v for v, a in rota.anuncios.items() if a.ronda > rota.ronda]
+            # Sem pai: só serve um vizinho viável (em geral, um que já tenha uma ronda mais nova).
+            candidatos = [v for v, a in rota.anuncios.items() if rota.viavel(a)]
             if candidatos:
                 self._escolher_pai(srv, rota, candidatos, "")
         elif origem == rota.pai:
@@ -130,9 +144,8 @@ class Rotas:
                 del self.servidores[srv]
 
     def _trocar_pai(self, srv: int, rota: RotaServidor, motivo: str) -> None:
-        """O pai deixou de servir: fica o mais barato dos anúncios da ronda mais recente."""
-        recente = max((a.ronda for a in rota.anuncios.values()), default=None)
-        candidatos = [v for v, a in rota.anuncios.items() if a.ronda == recente]
+        """O pai deixou de servir: fica o mais barato dos vizinhos viáveis, se houver."""
+        candidatos = [v for v, a in rota.anuncios.items() if rota.viavel(a)]
         self._escolher_pai(srv, rota, candidatos, motivo)
 
     def _escolher_pai(self, srv: int, rota: RotaServidor, candidatos: list[int],
@@ -150,7 +163,10 @@ class Rotas:
     def _anunciar(self, srv: int, rota: RotaServidor) -> None:
         """Passa a rota aos vizinhos menos ao pai: a ronda do pai e o próprio custo."""
         escolhido = rota.anuncios[rota.pai]
-        rota.ronda = max(rota.ronda, escolhido.ronda)  # a mais nova que já anunciou
+        if escolhido.ronda > rota.ronda:  # guarda o que anunciou, para a regra anti-ciclo
+            rota.ronda, rota.custo_anunciado = escolhido.ronda, escolhido.custo
+        elif escolhido.ronda == rota.ronda:
+            rota.custo_anunciado = min(rota.custo_anunciado, escolhido.custo)
         self._enviar({"srv": srv, "ronda": escolhido.ronda, "videos": escolhido.videos,
                       "rtt": escolhido.rtt, "saltos": escolhido.saltos}, exceto=rota.pai)
 
