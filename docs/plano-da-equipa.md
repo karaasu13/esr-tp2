@@ -29,7 +29,7 @@ Tudo o que aparece como "proposta" ou "recomendação" ainda não foi decidido p
 | A topologia tem caminhos alternativos e vários clientes ao mesmo tempo | Feito: cenário 3 com 13 nós, 2 servidores e 2 vizinhos por cliente |
 | As rotas são atualizadas quando entram e saem nós e quando a rede muda | Por fazer |
 | Os nós reencaminham o vídeo segundo a tabela | Feito, mas só funciona quando alguém diz a cada nó quem é o pai (ver secção 4) |
-| Pelo menos 2 servidores, cada um com pelo menos 2 vídeos diferentes | Em parte: há 2 vídeos e o nó aceita vários; falta testar com 2 servidores |
+| Pelo menos 2 servidores, cada um com pelo menos 2 vídeos diferentes | Em parte: há 2 vídeos e o nó aceita vários; falta testar com 2 servidores. Decidido: os dois servidores têm os mesmos 2 vídeos |
 | As rotas são escolhidas com medidas da rede | Por fazer (o tempo de ida e volta já é medido) |
 
 **Etapas sugeridas pelo guião** (não têm de ser feitas por ordem):
@@ -104,6 +104,8 @@ Em cada item contam três coisas: a ideia (especificação), a qualidade do cód
 | Como nascem as rotas | Os servidores anunciam-se periodicamente a toda a rede, e os clientes pedem o vídeo pelo caminho inverso | É a primeira estratégia do guião. Falta fechar os detalhes (ver secção 7) |
 | Medidas para escolher caminhos | Tempo de ida e volta, número de saltos, perda e variação do atraso | São as mais comuns. Falta o professor aceitar |
 | Extra principal | Regeneração de rotas: quando um caminho falha ou piora, a rede encontra outro sozinha | Escolhido cedo para não termos de refazer código |
+| Vídeos nos servidores | Dois servidores, cada um com os mesmos 2 vídeos (diferentes entre si). O vídeo k é o mesmo nos dois servidores | Decidido em grupo (14/11). Permite ao cliente ir buscar o vídeo ao servidor mais perto e trocar de servidor se um cair |
+| Exceção do "avô" | Um nó em risco de ficar isolado pode saber quem é o pai do seu pai, para se ligar a ele se perder todas as ligações | O professor autorizou: é a única situação em que um nó pode conhecer alguém além dos vizinhos diretos |
 
 ---
 
@@ -254,8 +256,9 @@ A decisão é do grupo. A recomendação, em resumo:
 
 - **Entram com o básico**, porque fazem parte do desenho das rotas: trocar logo para um vizinho de reserva quando o pai cai; avisar quem recebe de nós quando ficamos sem rota; mudar de caminho quando o atual piora, com uma margem; rotas que expiram se o servidor se calar; anúncios sem confirmação; limite de saltos; a lista de vídeos nos anúncios; medições no cliente; a hora de passagem em cada nó na mensagem de teste; e a comparação com a solução sem overlay.
 - **Logo a seguir:** detetar a falha pela falta de vídeo (300 ms em vez de 3 s).
-- **Só se sobrar tempo:** o pedido de socorro com o "avô" (e só se o professor aceitar), os logs com desenho da árvore, o leitor do nosso protocolo para o Wireshark, a comparação com o encaminhamento da rede real, e medir a perda pelos buracos na numeração.
-- **Proposta de tirar:** a troca de caminho sem cortes, partir os frames, o buffer no player, esconder frames perdidos (o player já o faz) e a troca de servidor.
+- **Agora possíveis, com a decisão dos vídeos:** ir buscar o vídeo ao servidor mais perto e trocar de servidor quando um cai.
+- **Só se sobrar tempo:** o pedido de socorro com o "avô" (já autorizado pelo professor), os logs com desenho da árvore, o leitor do nosso protocolo para o Wireshark, a comparação com o encaminhamento da rede real, e medir a perda pelos buracos na numeração.
+- **Proposta de tirar:** a troca de caminho sem cortes, partir os frames, o buffer no player e esconder frames perdidos (o player já o faz).
 
 Cada um destes está explicado por inteiro no documento dos extras.
 
@@ -281,12 +284,15 @@ Em cada item da avaliação conta a qualidade dos testes e do nosso espírito cr
 
 ## 9. Dúvidas para o professor
 
-1. **Um servidor ou dois?** O texto do guião diz "vamos considerar que só há um servidor de streaming" e "como só há um fluxo, apenas uma rota". A lista de requisitos pede "pelo menos, dois servidores, cada um a disponibilizar, no mínimo, dois fluxos de vídeo distintos". Estamos a seguir a lista de requisitos. Está certo?
-2. **Os dois servidores podem ter vídeos iguais?** Se sim, o cliente pode ir buscar o vídeo ao servidor mais perto. Se não, cada vídeo só existe num servidor.
-3. **Aceita as medidas que escolhemos** (tempo de ida e volta, saltos, perda e variação do atraso), todas medidas pelo nosso próprio protocolo?
-4. **Aceita a exceção do "avô"?** Num dos extras, um nó que está em risco de ficar isolado fica a saber quem é o vizinho do seu vizinho, para se ligar a ele se perder todas as ligações. É a única vez que um nó conhece alguém além dos vizinhos.
-5. **Aceita os extras** que propomos?
-6. **Datas:** o dia exato da entrega e o que se espera em cada avaliação intermédia.
+1. **Um servidor ou dois?** O texto do guião diz "vamos considerar que só há um servidor de streaming" e "como só há um fluxo, apenas uma rota". A lista de requisitos pede "pelo menos, dois servidores, cada um a disponibilizar, no mínimo, dois fluxos de vídeo distintos". Estamos a seguir a lista de requisitos (dois servidores com os mesmos 2 vídeos). Está certo?
+2. **Aceita as medidas que escolhemos** (tempo de ida e volta, saltos, perda e variação do atraso), todas medidas pelo nosso próprio protocolo?
+3. **Aceita os extras** que propomos?
+4. **Datas:** o dia exato da entrega e o que se espera em cada avaliação intermédia.
+
+**Já respondidas:**
+
+- **Exceção do "avô":** o professor autorizou. É a única situação em que um nó pode ir além do vizinho direto.
+- **Vídeos nos dois servidores:** decidimos em grupo que os dois servidores têm os mesmos 2 vídeos.
 
 ---
 

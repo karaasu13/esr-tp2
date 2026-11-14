@@ -9,7 +9,7 @@ Um **extra** é algo que o guião não pede. Este documento explica cada extra q
 **Regras que todos os extras respeitam** (são do professor):
 
 - O bootstrapper, o programa que recebe os nós novos, só lhes dá o número e os vizinhos. Não faz mais nada.
-- Um nó só conhece os seus vizinhos. Não conhece a rede inteira nem a árvore por onde o vídeo passa. A única exceção proposta é o "avô" do pedido de socorro, explicada mais abaixo, e precisa de autorização.
+- Um nó só conhece os seus vizinhos. Não conhece a rede inteira nem a árvore por onde o vídeo passa. A única exceção é o "avô" do pedido de socorro, explicada mais abaixo. O professor autorizou-a: é a única situação em que um nó pode ir além do vizinho direto.
 
 **Porque é que a lista encolheu.** Faltam cerca de seis semanas e ainda não há rotas nem vídeo a passar pelo overlay. O relatório tem no máximo 12 páginas, e cada extra só conta se estiver explicado e testado, com prints. Vale mais ter poucos extras que contam uma história do que muitos a meio. A história proposta é: **a rede recupera sozinha quando algo falha ou piora, e conseguimos medi-lo.**
 
@@ -34,17 +34,17 @@ Um **extra** é algo que o guião não pede. Este documento explica cada extra q
 | Mensagem de teste com a hora em cada salto (23) | Já implementada |
 | Comparação com a solução sem overlay (24) | Entra com o básico |
 | Detetar a falha pela falta de vídeo (5) | Logo a seguir |
-| Pedido de socorro, com o "avô" (33) | Só se sobrar tempo, e com autorização do professor |
+| Pedido de socorro, com o "avô" (33) | Só se sobrar tempo (autorizado pelo professor) |
 | Logs organizados e desenho da árvore (22) | Só se sobrar tempo |
 | Leitor do nosso protocolo para o Wireshark (25) | Só se sobrar tempo |
 | Comparar o overlay com o encaminhamento da rede real (a "opção B" do OSPF) | Só se sobrar tempo |
 | Medir a perda pelos números em falta (novo) | Só se sobrar tempo |
-| Ir ao servidor mais perto (parte do 7) | Depende da resposta do professor |
+| Ir ao servidor mais perto (parte do 7) | Logo a seguir (os dois servidores têm os mesmos vídeos) |
 | Troca de caminho sem cortes (3) | Tirar |
 | Partir os frames em pedaços (15) | Tirar |
 | Buffer no player (16) | Tirar |
 | Esconder frames perdidos (17) | Tirar: o player já o faz |
-| Troca de servidor (8) | Tirar |
+| Troca de servidor (8) | Logo a seguir, junto com o servidor mais perto |
 
 ---
 
@@ -139,6 +139,15 @@ Fazem parte do desenho das rotas. Decidi-los depois obrigava a refazer código.
   - *Depende de:* a reparação local.
   - *Custo:* baixo.
 
+- [ ] **Ir ao servidor mais perto (parte do 7).** Decidimos que os dois servidores têm os mesmos 2 vídeos, e o vídeo k é o mesmo nos dois. O cliente pede só "o vídeo k" e fica com o servidor que tiver o custo mais baixo até ele.
+  - *O que muda:* só o cliente. O fluxo continua a ser identificado pelo par (servidor, vídeo) no cabeçalho; o cliente escolhe qual dos dois pares pede. Basta os dois servidores servirem os mesmos ficheiros pela mesma ordem.
+  - *Custo:* baixo.
+
+- [ ] **Troca de servidor (8).** Se o servidor de onde vem o vídeo deixar de ter rota (cai, ou o caminho até ele desaparece), o cliente pede o mesmo vídeo ao outro servidor.
+  - *O que muda:* só o cliente, como no anterior. Antes estava para tirar porque obrigava a mudar a identificação do vídeo; com os mesmos vídeos nos dois servidores, já não obriga.
+  - *Porquê:* completa a história da recuperação: a rede recupera de uma ligação, de um nó e até de um servidor que cai.
+  - *Custo:* baixo, se houver o anterior.
+
 ---
 
 ## 3. Só se sobrar tempo
@@ -156,9 +165,9 @@ Fazem parte do desenho das rotas. Decidi-los depois obrigava a refazer código.
     - O nó só guarda o avô enquanto está em risco.
     - Quando o nó se liga ao avô, este passa a vizinho normal e a exceção acaba.
     - Serve para refazer uma ligação, não para calcular rotas.
+  - *Autorizado pelo professor.*
   - *Por decidir, o que é "estar em risco":* a proposta é **ter só um vizinho vivo**. A alternativa era "não ter reserva válida", mas isso acontece a muitos nós, mesmo com vários vizinhos vivos, e a exceção passava a ser a regra.
   - *Porque fica para o fim:*
-    - Fura a regra de o nó só conhecer os vizinhos. **Precisa da autorização do professor.**
     - Obriga os nós a aceitar apresentações de quem não está na lista dada pelo bootstrapper, o que pede regras novas: quando recusar, e o que fazer à ligação de emergência quando o vizinho original voltar.
     - No cenário 3, cada cliente tem 2 vizinhos, e o caso quase não acontece.
   - *Custo:* médio a alto.
@@ -181,9 +190,6 @@ Fazem parte do desenho das rotas. Decidi-los depois obrigava a refazer código.
   - *O que muda:* o transporte passa a ter um contador de pacotes por vizinho, em vez de um por nó. O formato do cabeçalho não muda.
   - *Custo:* médio.
 
-- [ ] **Ir ao servidor mais perto (parte do 7).** Se o mesmo vídeo estiver nos dois servidores, o cliente pede-o ao que tiver o custo mais baixo.
-  - *Depende de:* o professor dizer se os dois servidores podem ter vídeos iguais.
-  - *Custo:* baixo.
 
 ---
 
@@ -197,8 +203,6 @@ Fazem parte do desenho das rotas. Decidi-los depois obrigava a refazer código.
 
 - **Esconder frames perdidos (17).** Quando falta um frame, mostrar o anterior. **O player já faz isto:** a imagem só muda quando chega um frame novo.
 
-- **Troca de servidor (8).** Se um servidor cai, quem estava a ver um vídeo passava para a cópia do outro servidor. Obrigava a mudar a forma como um vídeo é identificado: hoje é o par (servidor, número do vídeo), que vai no cabeçalho de cada pacote, e teria de passar a ser o nome. E depende de o professor deixar os dois servidores terem vídeos iguais.
-
 ---
 
 ## O que mudou em relação à lista de 3/11
@@ -207,7 +211,8 @@ Fazem parte do desenho das rotas. Decidi-los depois obrigava a refazer código.
 2. **Partir os frames sai.** A lista antiga dava a entender que resolvia a perda de frames. Não resolve.
 3. **Detetar a falha pela falta de vídeo sobe**, de "pode entrar depois" para logo a seguir ao básico.
 4. **O pedido de socorro desce** para o fim, à espera do professor. E "estar em risco" passa a ser "ter só um vizinho vivo".
-5. **Saem cinco extras** (secção 4) e entram dois novos: a renovação do pedido e a medição da perda pelos números em falta.
+5. **Saem quatro extras** (secção 4) e entram dois novos: a renovação do pedido e a medição da perda pelos números em falta.
+7. **A 14/11:** o professor autorizou a exceção do "avô", e decidimos que os dois servidores têm os mesmos 2 vídeos. Por isso, ir ao servidor mais perto e trocar de servidor passam para "logo a seguir".
 6. **A "opção A" do OSPF desaparece como item.** Era só outro nome para os extras dos anúncios (anunciar de novo, expirar, sem confirmação e limite de saltos), que já estão na lista.
 
 ---
