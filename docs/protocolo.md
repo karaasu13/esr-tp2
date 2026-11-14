@@ -52,7 +52,7 @@ Cabeçalho fixo de **14 bytes**, ordem de rede (`struct "!BBBHHIHB"`).
 | 0x10 | ANNOUNCE | não | `{"srv": 1, "ronda": 1731600000, "videos": [0], "rtt": 2.0, "jitter": 0.1, "perda": 0.0, "saltos": 1}` | escolha de caminhos |
 | 0x11 | JOIN | sim no pedido inicial; não nas renovações | vazio; fluxo no cabeçalho | gestão de fluxos |
 | 0x12 | LEAVE | sim | vazio; fluxo no cabeçalho | gestão de fluxos |
-| 0x13 | WITHDRAW | (reservado) | (por definir) | escolha de caminhos |
+| 0x13 | WITHDRAW | sim | `{"srv": 1}` | escolha de caminhos |
 | 0x14 | PING | não | número e caminho acumulado | teste do caminho |
 | 0x20 | DATA | não | bytes do vídeo | streaming |
 
@@ -115,9 +115,18 @@ inteiro (a soma das ligações).
 - O anúncio de um vizinho vale 6 s (3 períodos). Se não for renovado, é apagado. Se não sobrar
   nenhum anúncio para um servidor, a rota para ele desaparece; quando o servidor deixa de
   anunciar, isto acontece em toda a rede.
-- Se o pai cair (idle timeout, `CLOSE` ou reinício) ou o anúncio dele expirar, passa logo ao
-  vizinho viável mais barato. Se não houver nenhum, fica sem pai até chegar um anúncio viável
-  (em geral, de uma ronda mais nova do que a última que anunciou).
+- Se o pai cair (idle timeout, `CLOSE` ou reinício), o anúncio dele expirar ou ele enviar
+  `WITHDRAW`, passa logo ao vizinho viável mais barato. Se não houver nenhum, envia `WITHDRAW`
+  e fica sem pai até chegar um anúncio viável (em geral, de uma ronda mais nova do que a última
+  que anunciou).
+- **`WITHDRAW` (perda de rota).** Corpo `{"srv": S}`, fiável, enviado a todos os vizinhos por um
+  nó que perdeu o pai para o servidor S e não tem nenhum vizinho viável. Quem o recebe do seu
+  pai trata-o como a queda do pai (mesma função: outro vizinho viável ou, sem nenhum, também
+  `WITHDRAW`). Quem o recebe de outro vizinho só apaga o anúncio desse vizinho para S. Assim, os
+  nós a jusante não esperam os 6 s de validade dos anúncios para procurar outro caminho.
+- Uma rota que fica vazia por `WITHDRAW` ou vizinho em baixo só é apagada 6 s depois do último
+  anúncio que guardou, para a ronda e o custo que o nó anunciou continuarem a valer na regra
+  anti-ciclo contra anúncios antigos que ainda andem pela rede.
 - **Troca por um vizinho melhor**, com o pai vivo: só se o custo por esse vizinho for mais baixo
   em mais de **15%** e em mais de **2 unidades**, comparando anúncios **da mesma ronda** do pai,
   e só se o vizinho for viável. A margem evita trocas a toda a hora entre caminhos parecidos. Também

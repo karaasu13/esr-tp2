@@ -211,18 +211,21 @@ class RedeFalsa:
 
             def send(self, destino, tipo, corpo=None, fiavel=False, fluxo=(0, 0)):
                 if (no, destino) in rede.rtt:
-                    rede.fila.append((destino, no, corpo))
+                    rede.fila.append((destino, no, tipo, corpo))
         return T()
 
     def entregar(self):
         while self.fila:
-            destino, origem, corpo = self.fila.pop(0)
-            self.rotas[destino].receber(origem, corpo)
+            destino, origem, tipo, corpo = self.fila.pop(0)
+            if tipo == Tipo.WITHDRAW:
+                self.rotas[destino].receber_withdraw(origem, corpo)
+            else:
+                self.rotas[destino].receber(origem, corpo)
 
     def anunciar(self, srv, ronda):
         for v in self.rotas[srv].transporte.neighbors:
-            self.fila.append((v, srv, {"srv": srv, "ronda": ronda, "videos": [0],
-                                       "rtt": 0.0, "saltos": 0}))
+            self.fila.append((v, srv, Tipo.ANNOUNCE, {"srv": srv, "ronda": ronda, "videos": [0],
+                                                      "rtt": 0.0, "saltos": 0}))
         self.entregar()
 
     def cortar(self, a, b):
@@ -392,6 +395,46 @@ class TestCenario2(unittest.IsolatedAsyncioTestCase):
         for player in self.players.values():
             self.assertEqual([await receber(player) for _ in FRAMES], FRAMES)
         self.assertEqual(dados_s1, [N1] * len(FRAMES))
+
+    async def test_ligacao_n1_n3_cai_n3_sem_viavel_envia_withdraw(self):
+        nos = await self._montar()
+        # 5% de perda entre N2 e N1 (+100 no custo): o N2 passa a receber pelo N3. Assim o N3
+        # não tem nenhum vizinho viável quando perder o N1 (o N2 recebe através dele).
+        medir = nos[N2].transporte.perda
+        nos[N2].transporte.perda = lambda no: 0.05 if no == N1 else medir(no)
+        await self._esperar(lambda: nos[N2].rotas.pai(S1) == N3)
+
+        withdraws = []
+        enviar = nos[N3].transporte.send
+
+        def registar(destino, tipo, *args, **kw):
+            if tipo == Tipo.WITHDRAW:
+                withdraws.append(destino)
+            return enviar(destino, tipo, *args, **kw)
+
+        nos[N3].transporte.send = registar
+        pais_c1 = []
+        ao_mudar = nos[C1].rotas.ao_mudar_pai
+        nos[C1].rotas.ao_mudar_pai = lambda srv, pai: (pais_c1.append(pai), ao_mudar(srv, pai))
+
+        with patch.object(ott_rotas, "VALIDADE_ANUNCIO", 6.0):  # sem expirar durante o teste
+            for a, b in ((N1, N3), (N3, N1)):
+                self._cortar(nos[a], b)
+                nos[a].transporte.idle_timeout = 1.0
+            inicio = time.monotonic()
+            await self._esperar(lambda: None in pais_c1)
+            self.assertLess(time.monotonic() - inicio, 3.0)  # idle timeout de 1 s, não 6 s
+            self.assertCountEqual(withdraws, [N2, C1])
+
+            # Ronda seguinte: S1 -> N1 -> N2 -> N3 -> C1, e o vídeo volta a chegar ao C1.
+            await self._esperar(lambda: nos[N3].rotas.pai(S1) == N2
+                                and nos[C1].rotas.pai(S1) == N3
+                                and nos[N2].rotas.pai(S1) == N1)
+            await self._esperar(lambda: N3 in nos[N2].tabela_fluxos[FLUXO].destinos)
+            await self._esperar(lambda: N2 in nos[N1].tabela_fluxos[FLUXO].destinos)
+            for frame in FRAMES:
+                nos[S1]._frame_do_servidor(0, frame)
+            self.assertEqual([await receber(self.players[C1]) for _ in FRAMES], FRAMES)
 
     @staticmethod
     def _cortar(no, vizinho):

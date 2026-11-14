@@ -154,6 +154,11 @@ class NoOTT:
                 self.rotas.receber(origem, corpo)
             return
 
+        if tipo == Tipo.WITHDRAW:
+            if origem in self._confirmados and isinstance(corpo, dict):
+                self.rotas.receber_withdraw(origem, corpo)
+            return
+
         if tipo == Tipo.JOIN:
             self._receber_join(origem, fluxo)
             return

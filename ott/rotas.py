@@ -6,8 +6,9 @@ Secção 14 de docs/desenho-rotas-e-video.md:
     ligação (RTT mínimo, jitter, perda e 1 salto), e fica com o vizinho mais barato como pai;
   * o anúncio de um vizinho vale VALIDADE_ANUNCIO; sem renovação é apagado, e sem anúncios
     a rota para o servidor desaparece;
-  * se o pai cair ou o anúncio dele expirar, passa logo ao mais barato dos vizinhos viáveis;
-    se não houver nenhum, fica sem pai até chegar uma ronda mais nova;
+  * se o pai cair, o anúncio dele expirar ou ele enviar WITHDRAW, passa logo ao mais barato dos
+    vizinhos viáveis; se não houver nenhum, envia WITHDRAW a todos os vizinhos e fica sem pai
+    até chegar uma ronda mais nova;
   * troca por um vizinho viável claramente melhor (margem de 15% e 2 unidades), comparando
     anúncios da mesma ronda;
   * quando a rota muda, anuncia-a a todos os vizinhos menos ao pai.
@@ -74,6 +75,10 @@ class RotaServidor:
     pai: int | None = None
     ronda: int = 0  # ronda mais nova que este nó já anunciou
     custo_anunciado: float = math.inf  # menor custo que este nó anunciou nessa ronda
+    # Último anúncio guardado. Uma rota vazia por expiração é apagada logo; uma que ficou vazia
+    # por WITHDRAW ou vizinho em baixo só VALIDADE_ANUNCIO depois disto, para a ronda e o custo
+    # acima continuarem a valer contra anúncios antigos que ainda andem pela rede.
+    atualizada: float = field(default_factory=time.monotonic)
 
     def viavel(self, anuncio: "Anuncio") -> bool:
         """Pode ser pai sem risco de ciclo (ver a regra no início do módulo)."""
@@ -128,6 +133,7 @@ class Rotas:
         if anterior is not None and ronda < anterior.ronda:
             return
         rtt_l, jitter_l, perda_l = self._medidas_ligacao(origem)
+        rota.atualizada = time.monotonic()
         rota.anuncios[origem] = Anuncio(
             ronda, videos, rtt + rtt_l, jitter + jitter_l, perda + perda_l, saltos + 1,
             anunciado=custo(rtt, jitter, perda, saltos))
@@ -161,6 +167,19 @@ class Rotas:
         self._escolher_pai(srv, rota, melhores, f"melhor do que {antigo}, custo {atual.custo:.1f}")
         return True
 
+    def receber_withdraw(self, origem: int, corpo: dict) -> None:
+        """WITHDRAW de um vizinho confirmado: perdeu a rota para o servidor."""
+        srv = corpo.get("srv")
+        if not (_inteiro(srv) and 1 <= srv <= 65535):
+            log.warning("[%s] WITHDRAW inválido de %s: %r", self.transporte.id, origem, corpo)
+            return
+        rota = self.servidores.get(srv)
+        if rota is None:
+            return
+        rota.anuncios.pop(origem, None)
+        if rota.pai == origem:
+            self._trocar_pai(srv, rota, f"WITHDRAW de {origem}")
+
     def vizinho_em_baixo(self, no: int) -> None:
         """Esquece os anúncios do vizinho; se era o pai, passa logo a outro."""
         for srv, rota in list(self.servidores.items()):
@@ -177,13 +196,16 @@ class Rotas:
                 del rota.anuncios[vizinho]
             if rota.pai in velhos:
                 self._trocar_pai(srv, rota, f"anúncio de {rota.pai} expirou")
-            if not rota.anuncios:
+            if not rota.anuncios and (velhos or rota.atualizada < limite):
                 del self.servidores[srv]
 
     def _trocar_pai(self, srv: int, rota: RotaServidor, motivo: str) -> None:
         """O pai deixou de servir: fica o mais barato dos vizinhos viáveis, se houver."""
         candidatos = [v for v, a in rota.anuncios.items() if rota.viavel(a)]
         self._escolher_pai(srv, rota, candidatos, motivo)
+        if rota.pai is None:  # sem reserva: quem recebe através deste nó procura já outro pai
+            for vizinho in self.transporte.neighbors:
+                self.transporte.send(vizinho, Tipo.WITHDRAW, {"srv": srv}, fiavel=True)
 
     def _escolher_pai(self, srv: int, rota: RotaServidor, candidatos: list[int],
                       motivo: str) -> None:
