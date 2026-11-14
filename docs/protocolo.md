@@ -81,7 +81,7 @@ ativos; `DATA` entrega o pacote RTP intacto ao player local. O servidor envia um
 fluxo ativo a cada 5 segundos. Cada nó acrescenta o seu ID e hora ao caminho e regista-o no
 log. O formato de `DATA` continua a ser o pacote RTP sem a hora extra que consta da proposta.
 
-## Anúncios e escolha do pai (`ott/rotas.py`, versão mínima)
+## Anúncios e escolha do pai (`ott/rotas.py`)
 
 Corpo do `ANNOUNCE` (JSON, não fiável):
 
@@ -99,17 +99,25 @@ Corpo do `ANNOUNCE` (JSON, não fiável):
 - Guarda o último anúncio de cada vizinho, por servidor, já somada a ligação:
   `rtt + RTT da ligação em ms` (100 ms se ainda não houver RTT) e `saltos + 1`.
   O custo por esse vizinho é `rtt + saltos`, ou seja, o custo anunciado mais `RTT da ligação + 1`.
-- Sem pai, fica com o vizinho de custo mais baixo. Só troca se o pai cair (idle timeout,
-  `CLOSE` ou reinício). Nesse caso apaga os anúncios dele e escolhe o novo pai entre os
-  anúncios de uma ronda mais nova do que a última do pai que caiu.
+- Sem pai, fica com o vizinho de custo mais baixo.
+- O anúncio de um vizinho vale 6 s (3 períodos). Se não for renovado, é apagado. Se não sobrar
+  nenhum anúncio para um servidor, a rota para ele desaparece; quando o servidor deixa de
+  anunciar, isto acontece em toda a rede.
+- Só troca de pai se o pai cair (idle timeout, `CLOSE` ou reinício) ou se o anúncio dele
+  expirar. Nesse caso passa logo ao vizinho mais barato entre os que têm anúncio da ronda mais
+  recente. Se não houver nenhum, fica sem pai até chegar um anúncio de uma ronda mais nova do
+  que a última que anunciou.
 - Quando escolhe um pai ou recebe uma ronda nova do pai, anuncia a todos os vizinhos menos ao
   pai, com a ronda do pai e o seu próprio `rtt` e `saltos`.
 - Quando o pai de um servidor muda, chama `definir_pai` para cada vídeo desse servidor que está
-  na tabela de fluxos ou foi pedido pelo player local (`--ver`): o `JOIN` sobe sozinho.
+  na tabela de fluxos ou foi pedido pelo player local (`--ver`): o `JOIN` sobe sozinho para o
+  pai novo. Sem pai, chama `definir_pai(fluxo, None)`.
 - No log: `[id] pai para o servidor S: V (custo X)`.
 
-Ainda não há margem para trocar de pai, regra anti-ciclo, expiração de anúncios nem `WITHDRAW`
-(passos 2 a 4 da secção 14 de `docs/desenho-rotas-e-video.md`).
+Ainda não há margem para trocar de pai, regra anti-ciclo nem `WITHDRAW` (passos 3 e 4 da
+secção 14 de `docs/desenho-rotas-e-video.md`). Sem a regra anti-ciclo, quando um nó perde a
+única ligação ao servidor, dois vizinhos podem escolher-se um ao outro até os anúncios
+expirarem (6 s), ou até o limite de 16 saltos cortar um ciclo maior.
 
 ## Fiabilidade
 

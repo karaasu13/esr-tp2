@@ -1,12 +1,15 @@
 """Escolha de caminhos: anúncios dos servidores e pai de cada servidor (versão mínima).
 
-Passo 1 da secção 14 de docs/desenho-rotas-e-video.md:
+Passos 1 e 2 da secção 14 de docs/desenho-rotas-e-video.md:
   * o nó com servidor local envia ANNOUNCE a todos os vizinhos de ~2 em 2 s;
   * cada nó guarda o último anúncio de cada vizinho, por servidor, e fica com o vizinho
     mais barato como pai;
-  * só troca de pai se o pai cair; o novo pai é escolhido na ronda seguinte;
+  * o anúncio de um vizinho vale VALIDADE_ANUNCIO; sem renovação é apagado, e sem anúncios
+    a rota para o servidor desaparece;
+  * só troca de pai se o pai cair ou o anúncio dele expirar: passa logo ao mais barato dos
+    vizinhos com anúncio da ronda mais recente;
   * quando a rota muda, anuncia-a a todos os vizinhos menos ao pai.
-Ainda não há margem para trocar, regra anti-ciclo, expiração de anúncios nem WITHDRAW.
+Ainda não há margem para trocar, regra anti-ciclo nem WITHDRAW.
 """
 from __future__ import annotations
 
@@ -24,6 +27,7 @@ log = logging.getLogger("ott.rotas")
 
 PERIODO_ANUNCIO = 2.0  # segundos, com variação ao acaso de ±VARIACAO_ANUNCIO
 VARIACAO_ANUNCIO = 0.1
+VALIDADE_ANUNCIO = 6.0  # segundos (3 períodos) até o anúncio de um vizinho ser apagado
 MAX_SALTOS = 16  # rede de segurança contra ciclos
 RTT_DESCONHECIDO_MS = 100.0  # custo de uma ligação ainda sem RTT medido
 
@@ -38,6 +42,7 @@ class Anuncio:
     videos: list[int]
     rtt: float  # ms, soma dos RTT do servidor até este nó, por este vizinho
     saltos: int
+    recebido: float = field(default_factory=time.monotonic)
 
     @property
     def custo(self) -> float:
@@ -48,7 +53,7 @@ class Anuncio:
 class RotaServidor:
     anuncios: dict[int, Anuncio] = field(default_factory=dict)  # vizinho -> último anúncio
     pai: int | None = None
-    ronda: int = 0  # ronda da rota atual; sem pai, só serve um anúncio mais novo do que esta
+    ronda: int = 0  # ronda mais nova já anunciada; sem pai, só serve um anúncio mais novo
 
 
 def _inteiro(valor: Any) -> bool:
@@ -97,29 +102,57 @@ class Rotas:
         rota.anuncios[origem] = Anuncio(ronda, videos, rtt + ms, saltos + 1)
 
         if rota.pai is None:
+            # Sem pai e sem alternativa quando o anterior caiu: espera por uma ronda mais nova.
             candidatos = [v for v, a in rota.anuncios.items() if a.ronda > rota.ronda]
-            if not candidatos:
-                return
-            rota.pai = min(candidatos, key=lambda v: rota.anuncios[v].custo)
-            log.info("[%s] pai para o servidor %s: %s (custo %.1f)", self.transporte.id,
-                     srv, rota.pai, rota.anuncios[rota.pai].custo)
-            self.ao_mudar_pai(srv, rota.pai)
-        elif origem != rota.pai:
-            return  # sem troca por um vizinho melhor nesta versão
-        escolhido = rota.anuncios[rota.pai]
-        rota.ronda = escolhido.ronda
-        self._enviar({"srv": srv, "ronda": escolhido.ronda, "videos": escolhido.videos,
-                      "rtt": escolhido.rtt, "saltos": escolhido.saltos}, exceto=rota.pai)
+            if candidatos:
+                self._escolher_pai(srv, rota, candidatos, "")
+        elif origem == rota.pai:
+            self._anunciar(srv, rota)
+        # anúncio de outro vizinho: fica guardado, sem troca por um vizinho melhor nesta versão
 
     def vizinho_em_baixo(self, no: int) -> None:
-        """Esquece os anúncios do vizinho; se era o pai, o próximo sai da ronda seguinte."""
-        for srv, rota in self.servidores.items():
+        """Esquece os anúncios do vizinho; se era o pai, passa logo a outro."""
+        for srv, rota in list(self.servidores.items()):
             rota.anuncios.pop(no, None)
             if rota.pai == no:
-                rota.pai = None
-                log.info("[%s] pai para o servidor %s: nenhum (vizinho %s em baixo)",
-                         self.transporte.id, srv, no)
-                self.ao_mudar_pai(srv, None)
+                self._trocar_pai(srv, rota, f"vizinho {no} em baixo")
+
+    def expirar(self) -> None:
+        """Apaga os anúncios não renovados; sem anúncios, a rota para o servidor desaparece."""
+        limite = time.monotonic() - VALIDADE_ANUNCIO
+        for srv, rota in list(self.servidores.items()):
+            velhos = [v for v, a in rota.anuncios.items() if a.recebido < limite]
+            for vizinho in velhos:
+                del rota.anuncios[vizinho]
+            if rota.pai in velhos:
+                self._trocar_pai(srv, rota, f"anúncio de {rota.pai} expirou")
+            if not rota.anuncios:
+                del self.servidores[srv]
+
+    def _trocar_pai(self, srv: int, rota: RotaServidor, motivo: str) -> None:
+        """O pai deixou de servir: fica o mais barato dos anúncios da ronda mais recente."""
+        recente = max((a.ronda for a in rota.anuncios.values()), default=None)
+        candidatos = [v for v, a in rota.anuncios.items() if a.ronda == recente]
+        self._escolher_pai(srv, rota, candidatos, motivo)
+
+    def _escolher_pai(self, srv: int, rota: RotaServidor, candidatos: list[int],
+                      motivo: str) -> None:
+        rota.pai = min(candidatos, key=lambda v: rota.anuncios[v].custo, default=None)
+        if rota.pai is None:
+            log.info("[%s] pai para o servidor %s: nenhum (%s)", self.transporte.id, srv, motivo)
+        else:
+            log.info("[%s] pai para o servidor %s: %s (custo %.1f)%s", self.transporte.id, srv,
+                     rota.pai, rota.anuncios[rota.pai].custo, f" ({motivo})" if motivo else "")
+        self.ao_mudar_pai(srv, rota.pai)
+        if rota.pai is not None:
+            self._anunciar(srv, rota)
+
+    def _anunciar(self, srv: int, rota: RotaServidor) -> None:
+        """Passa a rota aos vizinhos menos ao pai: a ronda do pai e o próprio custo."""
+        escolhido = rota.anuncios[rota.pai]
+        rota.ronda = max(rota.ronda, escolhido.ronda)  # a mais nova que já anunciou
+        self._enviar({"srv": srv, "ronda": escolhido.ronda, "videos": escolhido.videos,
+                      "rtt": escolhido.rtt, "saltos": escolhido.saltos}, exceto=rota.pai)
 
     def _enviar(self, corpo: dict, exceto: int | None) -> None:
         for vizinho in self.transporte.neighbors:

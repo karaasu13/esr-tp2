@@ -355,6 +355,7 @@ class NoOTT:
     async def _ciclo_fluxos(self) -> None:
         while True:
             await asyncio.sleep(0.25)
+            self.rotas.expirar()
             agora = time.monotonic()
             for fluxo, estado in list(self.tabela_fluxos.items()):
                 expirados = [
