@@ -10,6 +10,7 @@ import time
 from typing import Sequence
 
 from .protocolo import PORTA, Tipo, nome_tipo
+from .rotas import Rotas
 from .transporte import Endereco, Transporte
 from .video import LOCALHOST, PORTA_PLAYER, PORTA_SERVIDOR, PontaVideo
 
@@ -61,6 +62,7 @@ class NoOTT:
         self.video = PontaVideo(self._frame_do_servidor, portas_servidor, player, host=host_video)
         self.fluxos_player: set[tuple[int, int]] = set()  # fluxos entregues ao player local
         self.tabela_fluxos: dict[tuple[int, int], FluxoVideo] = {}  # pai e destinos de cada fluxo
+        self.rotas = Rotas(self.transporte, self._pai_mudou)  # escolhe o pai de cada servidor
         self._hellos_recebidos: set[int] = set()
         self._tarefas_religacao: dict[int, asyncio.Task] = {}
         self._tarefas_aplicacao: list[asyncio.Task] = []
@@ -147,6 +149,11 @@ class NoOTT:
             log.info("[%s] vizinho %s avisou que vai sair", self.transporte.id, origem)
             return
 
+        if tipo == Tipo.ANNOUNCE:
+            if origem in self._confirmados and isinstance(corpo, dict):
+                self.rotas.receber(origem, corpo)
+            return
+
         if tipo == Tipo.JOIN:
             self._receber_join(origem, fluxo)
             return
@@ -225,8 +232,16 @@ class NoOTT:
                 or not 0 <= stream <= 255):
             raise ValueError(f"fluxo inválido: {fluxo!r}")
 
+    def _pai_mudou(self, servidor: int, pai: int | None) -> None:
+        """As rotas escolheram outro pai para o servidor: aplica-o aos vídeos dele."""
+        for fluxo in sorted({*self.tabela_fluxos, *self.fluxos_player}):
+            if fluxo[0] == servidor:
+                self.definir_pai(fluxo, pai)
+
     def _estado_fluxo(self, fluxo: tuple[int, int]) -> FluxoVideo:
-        estado = self.tabela_fluxos.setdefault(fluxo, FluxoVideo())
+        estado = self.tabela_fluxos.get(fluxo)
+        if estado is None:  # fluxo novo: herda o pai já escolhido para o servidor
+            estado = self.tabela_fluxos[fluxo] = FluxoVideo(pai=self.rotas.pai(fluxo[0]))
         estado.local = fluxo in self.fluxos_player
         return estado
 
@@ -332,10 +347,15 @@ class NoOTT:
             asyncio.create_task(self._ciclo_fluxos()),
             asyncio.create_task(self._ciclo_ping()),
         ]
+        if self.video.portas_pedidas:
+            videos = list(range(len(self.video.portas_pedidas)))
+            self._tarefas_aplicacao.append(
+                asyncio.create_task(self.rotas.anunciar_servidor(videos)))
 
     async def _ciclo_fluxos(self) -> None:
         while True:
             await asyncio.sleep(0.25)
+            self.rotas.expirar()
             agora = time.monotonic()
             for fluxo, estado in list(self.tabela_fluxos.items()):
                 expirados = [
@@ -475,6 +495,7 @@ class NoOTT:
             estado.destinos.pop(no, None)
             if estado.pai == no:
                 estado.pai = None
+        self.rotas.vizinho_em_baixo(no)
 
     def _agendar_religacao(self, no: int) -> None:
         tarefa = self._tarefas_religacao.get(no)
@@ -536,7 +557,7 @@ def main() -> None:
                         metavar="PORTA",
                         help=f"entrega o vídeo ao player em localhost (sem valor: {PORTA_PLAYER})")
     parser.add_argument("--ver", action="append", default=[], metavar="SERVIDOR:STREAM",
-                        help="(provisório, até haver rotas) fluxo a entregar ao player; ex: 1:0")
+                        help="vídeo a pedir e entregar ao player, assim que houver pai; ex: 1:0")
     args = parser.parse_args()
     try:
         ipaddress.ip_address(args.ip_bootstrapper)
@@ -554,7 +575,9 @@ def main() -> None:
         fluxos = set()
         for v in args.ver:
             servidor, stream = v.split(":")
-            fluxos.add((int(servidor), int(stream)))
+            fluxo = (int(servidor), int(stream))
+            NoOTT._validar_fluxo(fluxo)
+            fluxos.add(fluxo)
         no = NoOTT(args.ip_bootstrapper, porta_bootstrapper=args.porta, porta=args.porta_local,
                    portas_servidor=args.servidor,
                    player=None if args.player is None else (LOCALHOST, args.player))

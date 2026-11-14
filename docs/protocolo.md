@@ -49,7 +49,7 @@ Cabeçalho fixo de **14 bytes**, ordem de rede (`struct "!BBBHHIHB"`).
 | 0x05 | KEEPALIVE | pede ACK, não é retransmitido | vazio | transporte |
 | 0x06 | ACK | não | pn confirmado, 4 B binário | transporte |
 | 0x07 | CLOSE | sim | `{}` | nó vizinho |
-| 0x10 | ANNOUNCE | (reservado) | (por definir) | escolha de caminhos |
+| 0x10 | ANNOUNCE | não | `{"srv": 1, "ronda": 1731600000, "videos": [0], "rtt": 2.0, "saltos": 1}` | escolha de caminhos |
 | 0x11 | JOIN | sim no pedido inicial; não nas renovações | vazio; fluxo no cabeçalho | gestão de fluxos |
 | 0x12 | LEAVE | sim | vazio; fluxo no cabeçalho | gestão de fluxos |
 | 0x13 | WITHDRAW | (reservado) | (por definir) | escolha de caminhos |
@@ -74,13 +74,50 @@ Cada fluxo mantém o pai, os vizinhos que pediram o vídeo e um estado ativo/ina
 pedido local ou de um descendente propaga um `JOIN` fiável ao pai; os pedidos são renovados
 sem fiabilidade de 2 em 2 segundos. Um destino que não renove durante 6 segundos é removido,
 tal como se tivesse enviado `LEAVE`. Quando o último destino sai, o nó envia `LEAVE` ao pai.
-O encaminhamento dos anúncios e a escolha automática do pai ainda não estão implementados;
-`NoOTT.definir_pai()` é o ponto de integração para essa lógica.
+O pai de cada fluxo é o pai escolhido para o servidor desse fluxo (secção seguinte).
 
 Um nó só aceita `DATA` e `PING` do pai registado para o fluxo. Reencaminha-os para os destinos
 ativos; `DATA` entrega o pacote RTP intacto ao player local. O servidor envia um `PING` por
 fluxo ativo a cada 5 segundos. Cada nó acrescenta o seu ID e hora ao caminho e regista-o no
 log. O formato de `DATA` continua a ser o pacote RTP sem a hora extra que consta da proposta.
+
+## Anúncios e escolha do pai (`ott/rotas.py`)
+
+Corpo do `ANNOUNCE` (JSON, não fiável):
+
+| Campo | O que é |
+|---|---|
+| `srv` | ID do nó do servidor |
+| `ronda` | Número do anúncio. Começa em `int(time.time())` e o servidor soma 1 em cada anúncio |
+| `videos` | Lista dos números dos vídeos do servidor (ex: `[0, 1]`) |
+| `rtt` | Soma dos RTT, em ms, do servidor até quem envia o anúncio (0 no servidor) |
+| `saltos` | Número de ligações do servidor até quem envia o anúncio (0 no servidor) |
+
+- O nó com `--servidor` envia um `ANNOUNCE` a todos os vizinhos de 2 em 2 s (±10% ao acaso).
+- Quem recebe só aceita anúncios de vizinhos confirmados. Deita fora rondas mais antigas do que
+  a última desse vizinho para esse servidor e anúncios com mais de 16 saltos.
+- Guarda o último anúncio de cada vizinho, por servidor, já somada a ligação:
+  `rtt + RTT da ligação em ms` (100 ms se ainda não houver RTT) e `saltos + 1`.
+  O custo por esse vizinho é `rtt + saltos`, ou seja, o custo anunciado mais `RTT da ligação + 1`.
+- Sem pai, fica com o vizinho de custo mais baixo.
+- O anúncio de um vizinho vale 6 s (3 períodos). Se não for renovado, é apagado. Se não sobrar
+  nenhum anúncio para um servidor, a rota para ele desaparece; quando o servidor deixa de
+  anunciar, isto acontece em toda a rede.
+- Só troca de pai se o pai cair (idle timeout, `CLOSE` ou reinício) ou se o anúncio dele
+  expirar. Nesse caso passa logo ao vizinho mais barato entre os que têm anúncio da ronda mais
+  recente. Se não houver nenhum, fica sem pai até chegar um anúncio de uma ronda mais nova do
+  que a última que anunciou.
+- Quando escolhe um pai ou recebe uma ronda nova do pai, anuncia a todos os vizinhos menos ao
+  pai, com a ronda do pai e o seu próprio `rtt` e `saltos`.
+- Quando o pai de um servidor muda, chama `definir_pai` para cada vídeo desse servidor que está
+  na tabela de fluxos ou foi pedido pelo player local (`--ver`): o `JOIN` sobe sozinho para o
+  pai novo. Sem pai, chama `definir_pai(fluxo, None)`.
+- No log: `[id] pai para o servidor S: V (custo X)`.
+
+Ainda não há margem para trocar de pai, regra anti-ciclo nem `WITHDRAW` (passos 3 e 4 da
+secção 14 de `docs/desenho-rotas-e-video.md`). Sem a regra anti-ciclo, quando um nó perde a
+única ligação ao servidor, dois vizinhos podem escolher-se um ao outro até os anúncios
+expirarem (6 s), ou até o limite de 16 saltos cortar um ciclo maior.
 
 ## Fiabilidade
 

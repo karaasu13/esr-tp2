@@ -113,3 +113,17 @@ ip link set eth0 up
 1. `tc qdisc show dev eth0` nos nós envolvidos: confirmar que não ficou perda de um teste anterior.
 2. `ss -Hulpn 'sport = :5000'`: confirmar que não ficou um processo antigo a ocupar o porto.
 3. Registar no log o cenário, o nó e a perda aplicada (ex: `bash scripts/demo-cenario1.sh perda20` grava em `logs/<nó>-perda20.log`).
+
+## 3. Arrancar um cenário inteiro com um só comando
+
+Depois de abrir a topologia no CORE e carregar em Start, na máquina (fora do CORE):
+
+```bash
+xhost +SI:localuser:root                       # uma vez por sessão gráfica
+sudo -E bash scripts/arrancar_cenario.sh 2     # cenário 2 (topologias/testte2.xml)
+sudo -E bash scripts/arrancar_cenario.sh 3     # cenário 3 (topologias/underlay.xml)
+```
+
+O script espera que os routers já encaminhem, arranca o bootstrapper, os nós, os players e por fim o servidor, e abre uma janela por programa com o nome do nó no título. Cada janela grava também em `logs/cenarioN-<nó>.log`. Para parar tudo, o Stop do CORE.
+
+No cenário 3, o bootstrapper corre no PC do N4 (10.0.21.20) na porta 5001, para não chocar com o nó do N4 na porta 5000.
