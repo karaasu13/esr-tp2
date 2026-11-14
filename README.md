@@ -74,10 +74,33 @@ python3 player/Cliente.py                             # player
 Para um 2.º vídeo que se distinga à vista, há o `videos/movie2.Mjpeg` (o mesmo com as cores
 invertidas): `python3 player/Servidor.py videos/movie2.Mjpeg 127.0.0.1 24001`.
 
-O pedido local de vídeo pode ser indicado com `--ver <ID do servidor>:<vídeo>` (ex: `--ver 1:0`).
-O código já mantém a tabela de fluxos, trata `JOIN`/`LEAVE` e só aceita vídeo do pai registado,
-mas a descoberta automática de rotas e a escolha do pai ainda estão por integrar; sem isso,
-`--ver` não inicia sozinho o pedido pela rede.
+O pedido local de vídeo faz-se com `--ver <ID do servidor>:<vídeo>` (ex: `--ver 1:0`). O nó do
+servidor anuncia-se de 2 em 2 s, cada nó escolhe o pai pelo custo mais baixo e, assim que o
+cliente tem pai, o `JOIN` sobe sozinho até ao servidor.
+
+### Cenário 2 no CORE (`topologias/testte2.xml`)
+
+Na pasta do projeto, em cada nó. O bootstrapper corre no n7; os nós usam o IP do n7 do lado deles
+(`10.0.0.1` no S1, `10.0.1.1` no N1, `10.0.2.1` no N2); os nós ligados ao n8 usam `10.0.6.1`, a
+interface do n7 virada para o n8. Arranca o nó do S1 por último, para o 1.º anúncio já encontrar
+as ligações feitas (sem troca de pai nesta versão, um pai escolhido cedo demais fica).
+
+```
+n7:  python3 -m bootstrapper configs/cenario2.json
+N1:  python3 -m ott 10.0.1.1
+N2:  python3 -m ott 10.0.2.1
+N3:  python3 -m ott 10.0.6.1
+C1:  python3 -m ott 10.0.6.1 --player --ver 1:0
+C1:  python3 player/Cliente.py              # 2.º terminal
+C2:  python3 -m ott 10.0.6.1 --player --ver 1:0
+C2:  python3 player/Cliente.py              # 2.º terminal
+S1:  python3 player/Servidor.py videos/movie.Mjpeg
+S1:  python3 -m ott 10.0.0.1 --servidor     # 2.º terminal
+```
+
+No log de cada nó aparece `pai para o servidor 1: <vizinho> (custo X)`. Pais esperados: N1 → 1,
+N2 → 2, N3 → 2, C1 → 3, C2 → 4. O servidor regista um `PING` de 5 em 5 s e cada nó do caminho
+regista-o com o caminho percorrido.
 
 Especificação do protocolo: [`docs/protocolo.md`](docs/protocolo.md).
 
