@@ -241,7 +241,7 @@ Um JOIN que venha do próprio pai é ignorado e fica registado no log: seria o i
 
 A ligação S1–N1 leva uma só cópia para os dois clientes.
 
-### A renovação do pedido (proposta)
+### A renovação do pedido (já implementada)
 
 Além do JOIN inicial, cada nó **repete o JOIN de 2 em 2 segundos** por cada vídeo que está a receber. Estas repetições não são fiáveis. Se um nó ficar **6 segundos** sem renovação de um destino, tira-o, como se tivesse recebido um LEAVE.
 
@@ -304,26 +304,24 @@ O DATA não é confirmado nem reenviado: um frame atrasado já não serve.
 2. Envia uma cópia a cada vizinho que está nos destinos.
 3. Se o player local está nos destinos, tira os 8 bytes e entrega-lhe o pacote RTP.
 
-### Nas pontas (sugestão, a combinar entre a Inês e o Pedro)
+### Nas pontas (já implementado pelo Pedro)
 
-**No servidor.** O programa de vídeo do professor corre ao lado do nó e entrega-lhe os frames por UDP dentro da própria máquina. O nó só os envia para a rede se o vídeo tiver destinos; se não tiver, deita-os fora. Funciona como um canal de televisão em direto: quem entra apanha o vídeo no ponto onde ele vai.
-
-```
-python3 -m ott <ip-do-bootstrapper> --videos filme:6000 desenhos:6001
-python3 player/Servidor.py movie.Mjpeg 127.0.0.1 6000
-```
-
-**No cliente.** O nó espera pelo anúncio que traz o vídeo com aquele nome, manda o JOIN e entrega os frames ao player.
+**No servidor.** O programa de vídeo do professor corre ao lado do nó e entrega-lhe os frames por UDP dentro da própria máquina, na porta 24000 (24001 para o 2.º vídeo, e assim por diante). O nó só os envia para a rede se o vídeo tiver destinos; se não tiver, deita-os fora. Funciona como um canal de televisão em direto: quem entra apanha o vídeo no ponto onde ele vai. O vídeo recomeça no fim, com o número do frame sempre a subir.
 
 ```
-python3 -m ott <ip-do-bootstrapper> --ver filme:25000
-python3 player/Cliente.py 25000
+python3 -m ott <ip-do-bootstrapper> --servidor 24000 --servidor 24001
+python3 player/Servidor.py videos/movie.Mjpeg 127.0.0.1 24000
+python3 player/Servidor.py videos/movie2.Mjpeg 127.0.0.1 24001
 ```
 
-Duas coisas a tratar no código do vídeo:
+**No cliente.** O nó entrega os frames ao player na porta 25000. Escolhe-se o vídeo pelo par (servidor, número do vídeo); quando os anúncios levarem a lista de vídeos, passa a poder ser pelo nome.
 
-- O vídeo de teste tem 500 frames (25 segundos) e o programa para no fim. Tem de recomeçar, com o número do frame sempre a subir, porque o player deita fora frames com número mais baixo do que o último.
-- Precisamos de pelo menos 2 vídeos diferentes por servidor, e só temos um.
+```
+python3 -m ott <ip-do-bootstrapper> --player --ver 1:0
+python3 player/Cliente.py
+```
+
+**Falta:** a opção `--ver` só regista o interesse. O pedido (JOIN) só sai quando o nó tiver pai, ou seja, quando houver anúncios.
 
 ---
 
@@ -376,13 +374,12 @@ Os códigos de 0x10 a 0x1F já estavam reservados no protocolo para as rotas.
 
 ## 13. O que falta decidir
 
-- [ ] **Renovação do JOIN** (secção 8), em vez de rotas que ficam ativas até alguém as desligar.
+- [x] **Renovação do JOIN** (secção 8), em vez de rotas que ficam ativas até alguém as desligar. Já implementada.
 - [ ] **A fórmula do custo** e os pesos (secção 6): 20 por cada 1% de perda e 1 por salto. A alternativa era uma ordem de prioridade: primeiro excluir ligações com perda acima de um limite, depois escolher pelo tempo. Tem o problema de a rota saltar quando a perda anda à volta do limite.
 - [ ] **Como medir a perda.** A proposta é contar sinais de vida sem confirmação. Mede a ida e a volta juntas e só dá uma amostra por segundo. A alternativa melhor, se sobrar tempo, é cada nó numerar os pacotes que envia a cada vizinho, e o vizinho contar os números que faltam.
 - [ ] **Os tempos do sinal de vida** (1 s e 3 sinais), e combiná-los entre vizinhos na mensagem de apresentação em vez de os ter fixos no código.
 - [ ] **O formato do DATA** com os 8 bytes da hora de envio.
-- [ ] **Não partir os frames** em pedaços. Perder um pedaço estraga o frame na mesma, por isso partir sozinho não melhora nada.
-- [ ] **As opções da linha de comando** e as portas locais para o servidor e o cliente (secção 10).
+- [ ] **Não partir os frames** em pedaços. Perder um pedaço estraga o frame na mesma, por isso partir sozinho não melhora nada. É o que o código faz hoje.
 
 ---
 
@@ -390,9 +387,9 @@ Os códigos de 0x10 a 0x1F já estavam reservados no protocolo para as rotas.
 
 Para ter vídeo a passar o mais cedo possível, a ordem proposta é:
 
-1. **Versão mínima.** Anúncios periódicos com custo. Cada nó fica com o melhor pai e só troca se o pai cair; nesse caso espera pela ronda seguinte. JOIN e LEAVE sem renovação. Reencaminhar o DATA. PING.
+1. **Versão mínima.** Anúncios periódicos com custo. Cada nó fica com o melhor pai e só troca se o pai cair; nesse caso espera pela ronda seguinte. (O JOIN e o LEAVE com renovação, o reencaminhamento do DATA e o PING já existem.)
    *Pronto quando:* no cenário 2 um cliente vê o vídeo e o PING mostra o caminho.
-2. **Limpeza automática.** Renovação do JOIN, anúncios que expiram, tratar o vizinho em baixo.
+2. **Limpeza automática.** Anúncios que expiram e escolher outro pai quando o atual cai. (A renovação do JOIN já existe.)
 3. **Custo completo.** As quatro medidas e a troca com margem.
 4. **Recuperação rápida.** O WITHDRAW e a reserva válida (regra 3 da secção 7).
 5. **Deteção pela falta de vídeo.**
