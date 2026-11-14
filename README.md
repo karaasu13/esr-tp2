@@ -15,7 +15,7 @@ Grupo: George, Inês, Pedro
 | `configs/` | Ficheiros JSON do bootstrapper, um por cenário (IP → ID e lista de ligações) |
 | `topologias/` | Topologias do CORE (`.xml`) |
 | `scripts/` | Scripts auxiliares para correr testes e demos no CORE (ex: `demo-cenario1.sh`) |
-| `docs/` | Especificação do protocolo |
+| `docs/` | Especificação do protocolo, endereços, guia de testes e os documentos do grupo: plano (`plano-da-equipa.md`), desenho das rotas e do vídeo (`desenho-rotas-e-video.md`) e extras (`extras.md`) |
 | `tests/` | Testes automáticos (`python3 -m unittest`) |
 
 ## Decisões base
