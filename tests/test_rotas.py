@@ -1,6 +1,7 @@
 """Anúncios e escolha do pai (ott/rotas.py), sozinhos e no cenário 2 em localhost."""
 import asyncio
 import json
+import random
 import tempfile
 import time
 import unittest
@@ -26,11 +27,19 @@ class TransporteFalso:
     def __init__(self, vizinhos, rtts):
         self.id = 1
         self.neighbors = vizinhos
-        self._rtts = rtts
+        self.rtts = rtts  # segundos
+        self.jitters = {}  # segundos
+        self.perdas = {}  # fração
         self.enviados = []
 
-    def rtt(self, no):
-        return self._rtts.get(no)
+    def rtt_min(self, no):
+        return self.rtts.get(no)
+
+    def jitter(self, no):
+        return self.jitters.get(no)
+
+    def perda(self, no):
+        return self.perdas.get(no)
 
     def send(self, destino, tipo, corpo=None, fiavel=False, fluxo=(0, 0)):
         self.enviados.append((destino, tipo, corpo, fiavel))
@@ -115,6 +124,60 @@ class TestRotas(unittest.TestCase):
         self.assertEqual(self.mudancas, [(9, 2), (9, 4), (9, None)])
 
 
+class TestTrocaComMargem(unittest.TestCase):
+    """Custo com as quatro medidas e troca por um vizinho claramente melhor."""
+
+    def setUp(self):
+        self.transporte = TransporteFalso([2, 3, 4], {2: 0.001, 3: 0.002, 4: 0.002})
+        self.mudancas = []
+        self.rotas = Rotas(self.transporte, lambda srv, pai: self.mudancas.append((srv, pai)))
+
+    def test_custo_soma_as_quatro_medidas_e_le_anuncios_antigos(self):
+        self.transporte.jitters[2] = 0.0005
+        self.transporte.perdas[2] = 0.01
+        self.rotas.receber(2, {"srv": 9, "ronda": 10, "videos": [0], "rtt": 3.0, "saltos": 1,
+                               "jitter": 0.5, "perda": 1.0})
+        # (3 + 1) ms de RTT + (0,5 + 0,5) ms de jitter + 20 x (1 + 1)% + 2 saltos
+        self.assertAlmostEqual(self.rotas.servidores[9].anuncios[2].custo, 4 + 1 + 40 + 2)
+        self.rotas.receber(3, anuncio(10))  # sem jitter nem perda: contam como 0
+        self.assertAlmostEqual(self.rotas.servidores[9].anuncios[3].custo, 3.0)
+
+    def test_perda_numa_ligacao_faz_a_rota_mudar(self):
+        rotas, transporte = self.rotas, self.transporte
+        rotas.receber(2, anuncio(10))  # custo 2
+        rotas.receber(3, anuncio(10))  # custo 3: não ganha pela margem
+        self.assertEqual(rotas.pai(9), 2)
+        transporte.perdas[2] = 0.05  # 5% de perda: +100 no custo da ligação ao 2
+        rotas.receber(2, anuncio(11))
+        rotas.receber(3, anuncio(11))
+        self.assertEqual(rotas.pai(9), 3)
+        self.assertEqual(self.mudancas, [(9, 2), (9, 3)])
+
+    def test_custos_parecidos_nao_ficam_a_trocar(self):
+        rotas, transporte = self.rotas, self.transporte
+        sorte = random.Random(1)
+        for ronda in range(100, 115):  # 15 rondas de 2 s = 30 s simulados
+            for vizinho in sorte.sample([2, 3], 2):  # ordem de chegada ao acaso
+                # 10 ms ± 5% e até 0,5 ms de jitter: diferenças até 1,5, abaixo da margem de 2.
+                # A ordem e as medidas mudam a cada ronda: sem margem, trocaria várias vezes.
+                transporte.rtts[vizinho] = sorte.uniform(0.0095, 0.0105)
+                transporte.jitters[vizinho] = sorte.uniform(0.0, 0.0005)
+                rotas.receber(vizinho, anuncio(ronda, rtt=4.0, saltos=1))
+        self.assertEqual(len(self.mudancas), 1)  # só a primeira escolha
+
+    def test_troca_por_um_melhor_nunca_escolhe_um_nao_viavel(self):
+        rotas, transporte = self.rotas, self.transporte
+        rotas.receber(2, anuncio(10))  # pai 2: anuncio a ronda 10 com custo 2
+        transporte.perdas[2] = 0.05
+        rotas.receber(2, anuncio(10))  # a ligação ao pai piorou: custo 102 na mesma ronda
+        # O 4 recebe através de mim: anuncia 3,5 na ronda 10, mais do que os 2 que anunciei.
+        # Ir por ele custaria 6,5 (passa a margem), mas não é viável.
+        rotas.receber(4, anuncio(10, rtt=1.5, saltos=2))
+        self.assertAlmostEqual(rotas.servidores[9].anuncios[4].custo, 6.5)
+        self.assertEqual(rotas.pai(9), 2)
+        self.assertEqual(self.mudancas, [(9, 2)])
+
+
 class RedeFalsa:
     """Vários Rotas ligados em memória. As mensagens vão para uma fila e são entregues por
     ordem de envio, como numa rede em que todas as ligações têm o mesmo atraso."""
@@ -137,23 +200,32 @@ class RedeFalsa:
             def neighbors(self):
                 return sorted(b for a, b in rede.rtt if a == no)
 
-            def rtt(self, outro):
+            def rtt_min(self, outro):
                 return rede.rtt.get((no, outro))
+
+            def jitter(self, outro):
+                return None
+
+            def perda(self, outro):
+                return None
 
             def send(self, destino, tipo, corpo=None, fiavel=False, fluxo=(0, 0)):
                 if (no, destino) in rede.rtt:
-                    rede.fila.append((destino, no, corpo))
+                    rede.fila.append((destino, no, tipo, corpo))
         return T()
 
     def entregar(self):
         while self.fila:
-            destino, origem, corpo = self.fila.pop(0)
-            self.rotas[destino].receber(origem, corpo)
+            destino, origem, tipo, corpo = self.fila.pop(0)
+            if tipo == Tipo.WITHDRAW:
+                self.rotas[destino].receber_withdraw(origem, corpo)
+            else:
+                self.rotas[destino].receber(origem, corpo)
 
     def anunciar(self, srv, ronda):
         for v in self.rotas[srv].transporte.neighbors:
-            self.fila.append((v, srv, {"srv": srv, "ronda": ronda, "videos": [0],
-                                       "rtt": 0.0, "saltos": 0}))
+            self.fila.append((v, srv, Tipo.ANNOUNCE, {"srv": srv, "ronda": ronda, "videos": [0],
+                                                      "rtt": 0.0, "saltos": 0}))
         self.entregar()
 
     def cortar(self, a, b):
@@ -324,6 +396,89 @@ class TestCenario2(unittest.IsolatedAsyncioTestCase):
             self.assertEqual([await receber(player) for _ in FRAMES], FRAMES)
         self.assertEqual(dados_s1, [N1] * len(FRAMES))
 
+    async def test_ligacao_n1_n3_cai_n3_sem_viavel_envia_withdraw(self):
+        nos = await self._montar()
+        # 5% de perda entre N2 e N1 (+100 no custo): o N2 passa a receber pelo N3. Assim o N3
+        # não tem nenhum vizinho viável quando perder o N1 (o N2 recebe através dele).
+        medir = nos[N2].transporte.perda
+        nos[N2].transporte.perda = lambda no: 0.05 if no == N1 else medir(no)
+        await self._esperar(lambda: nos[N2].rotas.pai(S1) == N3)
+
+        withdraws = []
+        enviar = nos[N3].transporte.send
+
+        def registar(destino, tipo, *args, **kw):
+            if tipo == Tipo.WITHDRAW:
+                withdraws.append(destino)
+            return enviar(destino, tipo, *args, **kw)
+
+        nos[N3].transporte.send = registar
+        pais_c1 = []
+        ao_mudar = nos[C1].rotas.ao_mudar_pai
+        nos[C1].rotas.ao_mudar_pai = lambda srv, pai: (pais_c1.append(pai), ao_mudar(srv, pai))
+
+        with patch.object(ott_rotas, "VALIDADE_ANUNCIO", 6.0):  # sem expirar durante o teste
+            for a, b in ((N1, N3), (N3, N1)):
+                self._cortar(nos[a], b)
+                nos[a].transporte.idle_timeout = 1.0
+            inicio = time.monotonic()
+            await self._esperar(lambda: None in pais_c1)
+            self.assertLess(time.monotonic() - inicio, 3.0)  # idle timeout de 1 s, não 6 s
+            self.assertCountEqual(withdraws, [N2, C1])
+
+            # Ronda seguinte: S1 -> N1 -> N2 -> N3 -> C1, e o vídeo volta a chegar ao C1.
+            await self._esperar(lambda: nos[N3].rotas.pai(S1) == N2
+                                and nos[C1].rotas.pai(S1) == N3
+                                and nos[N2].rotas.pai(S1) == N1)
+            await self._esperar(lambda: N3 in nos[N2].tabela_fluxos[FLUXO].destinos)
+            await self._esperar(lambda: N2 in nos[N1].tabela_fluxos[FLUXO].destinos)
+            for frame in FRAMES:
+                nos[S1]._frame_do_servidor(0, frame)
+            self.assertEqual([await receber(self.players[C1]) for _ in FRAMES], FRAMES)
+
+    async def test_sem_video_do_pai_troca_em_menos_de_1_s(self):
+        nos = await self._montar()
+        # Medidas fixas (o jitter em localhost varia alguns ms): ligação N3-N1 com custo 2,5,
+        # N3-N2 e N2-N1 com custo 1. O N3 fica com o N1 (pelo N2 custaria só menos 0,5, abaixo
+        # da margem), e o N2 anuncia menos do que o N3, por isso é uma reserva viável.
+        self._fixar_medidas(nos[N3], {N1: (0.0, 0.0015), N2: (0.0, 0.0)})
+        self._fixar_medidas(nos[N2], {N1: (0.0, 0.0)})
+        rota_n3 = nos[N3].rotas.servidores[S1]
+
+        def medidas_fixas_em_vigor():
+            a1, a2 = rota_n3.anuncios.get(N1), rota_n3.anuncios.get(N2)
+            return (a1 and a2 and a1.ronda == a2.ronda and rota_n3.viavel(a2)
+                    and abs((a1.custo - a2.custo) - 0.5) < 0.01)
+
+        await self._esperar(medidas_fixas_em_vigor)
+        self.assertEqual(nos[N3].rotas.pai(S1), N1)
+
+        async def video():  # 20 frames por segundo, como o Servidor.py
+            while True:
+                nos[S1]._frame_do_servidor(0, FRAMES[0])
+                await asyncio.sleep(0.05)
+
+        tarefa = asyncio.create_task(video())
+        self.addCleanup(tarefa.cancel)
+        await self._esperar(lambda: FLUXO in nos[N3]._ultimo_video)
+
+        enviar = nos[N1].transporte.send  # o N1 deixa de enviar DATA ao N3; o resto passa
+        nos[N1].transporte.send = lambda destino, tipo, *a, **kw: (
+            0 if tipo == Tipo.DATA and destino == N3 else enviar(destino, tipo, *a, **kw))
+        inicio = time.monotonic()
+        await self._esperar(lambda: nos[N3].rotas.pai(S1) == N2, timeout=1.0)
+        self.assertLess(time.monotonic() - inicio, 1.0)
+        self.assertIn(N1, nos[N3].transporte.neighbors)  # não deu o N1 como em baixo
+        await self._esperar(lambda: FLUXO in nos[N3]._ultimo_video)  # vídeo de novo, pelo N2
+        self.assertEqual(nos[N3].tabela_fluxos[FLUXO].pai, N2)
+
+    @staticmethod
+    def _fixar_medidas(no, medidas):
+        """Medidas fixas (rtt_min e jitter, em segundos) das ligações aos vizinhos indicados."""
+        rtt_min, jitter = no.transporte.rtt_min, no.transporte.jitter
+        no.transporte.rtt_min = lambda v: medidas[v][0] if v in medidas else rtt_min(v)
+        no.transporte.jitter = lambda v: medidas[v][1] if v in medidas else jitter(v)
+
     @staticmethod
     def _cortar(no, vizinho):
         """Deita fora tudo o que o nó envia ao vizinho."""
@@ -346,6 +501,85 @@ class TestCenario2(unittest.IsolatedAsyncioTestCase):
     async def _fechar(*partes):
         for parte in partes:
             parte.close()
+
+
+@patch.object(ott_rotas, "PERIODO_ANUNCIO", 0.2)
+@patch.object(ott_rotas, "VALIDADE_ANUNCIO", 0.6)
+class TestDoisServidores(unittest.IsolatedAsyncioTestCase):
+    """S1 - A - B - S2, com C1 ligado ao A e C2 ao B; os clientes pedem só o vídeo 0 (--ver 0).
+    Medidas fixas: todas as ligações a 0 ms, menos A-B com 0,5 ms. Pelo lado de cada cliente o
+    servidor mais perto custa 2 e o outro 3,5: a diferença não passa a margem, por isso só a
+    espera antes da 1.ª escolha evita que o cliente fique com o servidor que arrancou primeiro."""
+
+    S1, A, B, S2, C1, C2 = 1, 2, 3, 4, 5, 6
+    LIGACOES = [(1, 2), (2, 3), (3, 4), (2, 5), (3, 6)]
+
+    async def _montar(self):
+        S1, A, B, S2, C1, C2 = self.S1, self.A, self.B, self.S2, self.C1, self.C2
+        porta = porta_livre()
+        dados = {
+            "bootstrapper": {"host": "127.0.0.7", "port": porta},
+            "nodes": {f"127.0.0.{no}": no for no in range(1, 7)},
+            "links": [{"node1": a, "ip1": f"127.0.0.{a}", "node2": b, "ip2": f"127.0.0.{b}"}
+                      for a, b in self.LIGACOES],
+        }
+        with tempfile.TemporaryDirectory() as pasta:
+            config = Path(pasta) / "config.json"
+            config.write_text(json.dumps(dados), encoding="utf-8")
+            configuracao = carregar_configuracao(config)
+        self.players = {C1: player_falso(), C2: player_falso()}
+        for player in self.players.values():
+            self.addCleanup(player.close)
+
+        def criar(no, **opcoes):
+            return NoOTT("127.0.0.7", porta_bootstrapper=porta, host=f"127.0.0.{no}",
+                         porta=porta, **opcoes)
+
+        bootstrapper = Bootstrapper(configuracao)
+        nos = {no: criar(no) for no in (A, B)}
+        for servidor in (S1, S2):
+            nos[servidor] = criar(servidor, portas_servidor=[0])
+        for cliente, player in self.players.items():
+            nos[cliente] = criar(cliente, player=player.getsockname())
+            nos[cliente].videos_pedidos = {0}  # como --ver 0
+        for no, t in nos.items():
+            vizinhos = [b for a, b in self.LIGACOES if a == no] + [a for a, b in self.LIGACOES if b == no]
+            TestCenario2._fixar_medidas(t, {v: (0.0005 if {no, v} == {A, B} else 0.0, 0.0)
+                                            for v in vizinhos})
+        self.addAsyncCleanup(TestCenario2._fechar, bootstrapper, *nos.values())
+
+        await bootstrapper.start()
+        await asyncio.gather(*(nos[no].start() for no in (A, B, C1, C2)))
+        await TestCenario2._esperar(lambda: all(
+            b in nos[a]._confirmados and a in nos[b]._confirmados
+            for a, b in self.LIGACOES if not {a, b} & {S1, S2}))
+        await nos[S1].start()
+        await asyncio.sleep(0.3)  # o S2 arranca depois (menos do que a espera de 2 rondas)
+        await nos[S2].start()
+        return nos
+
+    async def test_cada_cliente_fica_com_o_mais_barato_e_troca_quando_o_seu_para(self):
+        S1, A, B, S2, C1, C2 = self.S1, self.A, self.B, self.S2, self.C1, self.C2
+        esperar = TestCenario2._esperar
+        nos = await self._montar()
+        await esperar(lambda: nos[C1]._servidor_do_video.get(0) == S1
+                      and nos[C2]._servidor_do_video.get(0) == S2)
+        await esperar(lambda: set(nos[S1].tabela_fluxos[(S1, 0)].destinos) == {A}
+                      and set(nos[S2].tabela_fluxos[(S2, 0)].destinos) == {B})
+        for servidor, cliente in ((S1, C1), (S2, C2)):
+            for frame in FRAMES:
+                nos[servidor]._frame_do_servidor(0, frame)
+            self.assertEqual([await receber(self.players[cliente]) for _ in FRAMES], FRAMES)
+
+        await nos[S1].shutdown()  # o S1 para: o C1 passa a pedir o vídeo 0 ao S2
+        await esperar(lambda: nos[C1]._servidor_do_video.get(0) == S2)
+        self.assertNotIn((S1, 0), nos[C1].fluxos_player)  # o fluxo antigo foi largado
+        await esperar(lambda: set(nos[B].tabela_fluxos[(S2, 0)].destinos) == {A, C2})
+        for frame in FRAMES:
+            nos[S2]._frame_do_servidor(0, frame)
+        for player in self.players.values():
+            self.assertEqual([await receber(player) for _ in FRAMES], FRAMES)
+        self.assertEqual(nos[C2]._servidor_do_video[0], S2)
 
 
 if __name__ == "__main__":

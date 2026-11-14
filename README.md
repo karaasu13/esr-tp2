@@ -74,16 +74,27 @@ python3 player/Cliente.py                             # player
 Para um 2.º vídeo que se distinga à vista, há o `videos/movie2.Mjpeg` (o mesmo com as cores
 invertidas): `python3 player/Servidor.py videos/movie2.Mjpeg 127.0.0.1 24001`.
 
-O pedido local de vídeo faz-se com `--ver <ID do servidor>:<vídeo>` (ex: `--ver 1:0`). O nó do
-servidor anuncia-se de 2 em 2 s, cada nó escolhe o pai pelo custo mais baixo e, assim que o
-cliente tem pai, o `JOIN` sobe sozinho até ao servidor.
+O pedido local de vídeo faz-se com `--ver`:
+
+- `--ver k` (ex: `--ver 0`): pede o vídeo k ao servidor mais barato entre os que o anunciam. Os
+  servidores têm os mesmos vídeos pela mesma ordem. Se esse servidor ficar sem rota, o cliente
+  passa para o outro (LEAVE do fluxo antigo, JOIN do novo); se o primeiro voltar e for mais
+  barato pela margem (15% e 2 unidades), volta para ele.
+- `--ver <ID do servidor>:<vídeo>` (ex: `--ver 1:0`): pede o vídeo a esse servidor.
+
+O nó do servidor anuncia-se de 2 em 2 s, cada nó escolhe o pai pelo custo mais baixo e, assim que
+o cliente tem pai, o `JOIN` sobe sozinho até ao servidor.
+
+Para arrancar um cenário inteiro de uma vez (bootstrapper, nós, players e servidores, uma janela
+por programa, logs em `logs/`): `sudo -E bash scripts/arrancar_cenario.sh 2` ou `... 3` (ver
+`docs/testes.md`).
 
 ### Cenário 2 no CORE (`topologias/testte2.xml`)
 
 Na pasta do projeto, em cada nó. O bootstrapper corre no n7; os nós usam o IP do n7 do lado deles
 (`10.0.0.1` no S1, `10.0.1.1` no N1, `10.0.2.1` no N2); os nós ligados ao n8 usam `10.0.6.1`, a
 interface do n7 virada para o n8. Arranca o nó do S1 por último, para o 1.º anúncio já encontrar
-as ligações feitas (sem troca de pai nesta versão, um pai escolhido cedo demais fica).
+as ligações feitas.
 
 ```
 n7:  python3 -m bootstrapper configs/cenario2.json
@@ -101,6 +112,26 @@ S1:  python3 -m ott 10.0.0.1 --servidor     # 2.º terminal
 No log de cada nó aparece `pai para o servidor 1: <vizinho> (custo X)`. Pais esperados: N1 → 1,
 N2 → 2, N3 → 2, C1 → 3, C2 → 4. O servidor regista um `PING` de 5 em 5 s e cada nó do caminho
 regista-o com o caminho percorrido.
+
+### Cenário 3 no CORE (`topologias/underlay.xml`), com dois servidores
+
+O bootstrapper corre no PC do N4 (`10.0.21.20`) na porta 5001, com uma cópia do JSON com essa
+porta (é o que o script faz). Os dois servidores enviam o mesmo vídeo e os clientes pedem só o
+vídeo 0, sem dizer a que servidor:
+
+```
+N4:  sed 's/"port": 5000/"port": 5001/' configs/cenario3.json > /tmp/cenario3-bootstrapper.json
+N4:  python3 -m bootstrapper /tmp/cenario3-bootstrapper.json
+N1, N2, N3, N4, N5, N6:  python3 -m ott 10.0.21.20 --porta 5001
+C1 a C5:  python3 player/Cliente.py
+C1 a C5:  python3 -m ott 10.0.21.20 --porta 5001 --player --ver 0
+S1, S2:   python3 player/Servidor.py videos/movie.Mjpeg
+S1, S2:   python3 -m ott 10.0.21.20 --porta 5001 --servidor
+```
+
+No log de cada cliente aparece `vídeo 0: servidor 17 (custo X)` (S1) ou `servidor 16` (S2), conforme
+o que estiver mais perto. Quando um servidor para, os clientes dele mostram
+`vídeo 0: servidor <outro> (custo X), antes <o que parou>`.
 
 Especificação do protocolo: [`docs/protocolo.md`](docs/protocolo.md).
 

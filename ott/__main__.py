@@ -10,7 +10,8 @@ import time
 from typing import Sequence
 
 from .protocolo import PORTA, Tipo, nome_tipo
-from .rotas import Rotas
+from . import rotas as modulo_rotas
+from .rotas import Rotas, melhor_pela_margem
 from .transporte import Endereco, Transporte
 from .video import LOCALHOST, PORTA_PLAYER, PORTA_SERVIDOR, PontaVideo
 
@@ -19,6 +20,7 @@ log = logging.getLogger("ott")
 RENOVACAO_JOIN = 2.0
 VALIDADE_DESTINO = 6.0
 PERIODO_PING = 5.0
+SEM_VIDEO = 0.3  # s sem DATA do pai num fluxo ativo (6 frames a 20 por segundo): procurar outro pai
 INTERVALOS_HELLO = (5, 10, 20, 40, 60)
 
 
@@ -61,6 +63,10 @@ class NoOTT:
         # (JOIN / anúncios) em vez de configurado à mão.
         self.video = PontaVideo(self._frame_do_servidor, portas_servidor, player, host=host_video)
         self.fluxos_player: set[tuple[int, int]] = set()  # fluxos entregues ao player local
+        # --ver k: vídeos pedidos ao servidor mais barato, e o servidor escolhido para cada um
+        self.videos_pedidos: set[int] = set()
+        self._servidor_do_video: dict[int, int] = {}
+        self._primeira_rota_do_video: dict[int, float] = {}  # quando apareceu a 1.ª opção
         self.tabela_fluxos: dict[tuple[int, int], FluxoVideo] = {}  # pai e destinos de cada fluxo
         self.rotas = Rotas(self.transporte, self._pai_mudou)  # escolhe o pai de cada servidor
         self._hellos_recebidos: set[int] = set()
@@ -68,6 +74,8 @@ class NoOTT:
         self._tarefas_aplicacao: list[asyncio.Task] = []
         self._ping_seq: dict[tuple[int, int], int] = {}
         self._ultima_renovacao: dict[tuple[int, int], float] = {}
+        # fluxo -> hora do último DATA do pai; só existe depois do 1.º DATA desse pai
+        self._ultimo_video: dict[tuple[int, int], float] = {}
         self._em_encerramento = False
 
     async def start(self, timeout: float = 15) -> None:
@@ -154,6 +162,11 @@ class NoOTT:
                 self.rotas.receber(origem, corpo)
             return
 
+        if tipo == Tipo.WITHDRAW:
+            if origem in self._confirmados and isinstance(corpo, dict):
+                self.rotas.receber_withdraw(origem, corpo)
+            return
+
         if tipo == Tipo.JOIN:
             self._receber_join(origem, fluxo)
             return
@@ -219,6 +232,7 @@ class NoOTT:
         if anterior is not None and self._ativo(fluxo) and anterior in self.transporte.neighbors:
             self.transporte.send(anterior, Tipo.LEAVE, {}, fiavel=True, fluxo=fluxo)
         estado.pai = pai
+        self._ultimo_video.pop(fluxo, None)  # o pai novo ainda não enviou vídeo: não vigiar já
         if pai is not None and self._registado and self._ativo(fluxo) and not self._servidor_local(fluxo):
             self._enviar_join(fluxo, pai, fiavel=True)
         self._registar_tabela()
@@ -237,6 +251,37 @@ class NoOTT:
         for fluxo in sorted({*self.tabela_fluxos, *self.fluxos_player}):
             if fluxo[0] == servidor:
                 self.definir_pai(fluxo, pai)
+        self._escolher_servidores()
+
+    def _escolher_servidores(self) -> None:
+        """--ver k: pede o vídeo k ao servidor mais barato que o anuncia. Troca de servidor se o
+        atual ficar sem rota, ou se outro for mais barato pela margem (LEAVE do fluxo antigo,
+        JOIN do novo). O vídeo k é o mesmo em todos os servidores."""
+        for video in sorted(self.videos_pedidos):
+            opcoes = {}
+            for srv in self.rotas.servidores:
+                rota = self.rotas.rota(srv)
+                if rota is not None and video in rota.videos:
+                    opcoes[srv] = rota.custo
+            if not opcoes:
+                continue  # sem rota para nenhum: fica com o atual até alguém voltar
+            melhor = min(opcoes, key=opcoes.get)
+            atual = self._servidor_do_video.get(video)
+            if atual is None:
+                # 1.ª escolha: espera duas rondas para ouvir todos os servidores. Senão ficava
+                # com o primeiro a chegar, e o mais perto quase nunca ganha pela margem.
+                inicio = self._primeira_rota_do_video.setdefault(video, time.monotonic())
+                if time.monotonic() - inicio < 2 * modulo_rotas.PERIODO_ANUNCIO:
+                    continue
+            if melhor == atual or (atual in opcoes
+                                   and not melhor_pela_margem(opcoes[melhor], opcoes[atual])):
+                continue
+            if atual is not None:
+                self.desistir_video((atual, video))
+            self._servidor_do_video[video] = melhor
+            log.info("[%s] vídeo %s: servidor %s (custo %.1f)%s", self.transporte.id, video,
+                     melhor, opcoes[melhor], "" if atual is None else f", antes {atual}")
+            self.pedir_video((melhor, video))
 
     def _estado_fluxo(self, fluxo: tuple[int, int]) -> FluxoVideo:
         estado = self.tabela_fluxos.get(fluxo)
@@ -308,7 +353,17 @@ class NoOTT:
             log.debug("[%s] DATA de %s para fluxo %s descartado", self.transporte.id,
                       origem, fluxo)
             return
+        self._ultimo_video[fluxo] = time.monotonic()
         self._distribuir_video(fluxo, rtp)
+
+    def _vigiar_video(self, agora: float) -> None:
+        """Fluxo ativo sem DATA do pai há mais de SEM_VIDEO: troca de pai, se houver viável."""
+        for fluxo, ultimo in list(self._ultimo_video.items()):
+            if not self._ativo(fluxo) or self._pai(fluxo) is None:
+                self._ultimo_video.pop(fluxo, None)  # volta a vigiar depois do próximo DATA
+            elif agora - ultimo > SEM_VIDEO:
+                # Sem vizinho viável fica com o pai e tenta outra vez na volta seguinte.
+                self.rotas.pai_sem_video(fluxo[0], agora - ultimo)
 
     def _receber_ping(self, origem: int, fluxo: tuple[int, int], corpo: dict) -> None:
         if origem != self._pai(fluxo) or not self._ativo(fluxo):
@@ -356,7 +411,9 @@ class NoOTT:
         while True:
             await asyncio.sleep(0.25)
             self.rotas.expirar()
+            self._escolher_servidores()  # os custos mudam a cada ronda, mesmo sem mudar o pai
             agora = time.monotonic()
+            self._vigiar_video(agora)
             for fluxo, estado in list(self.tabela_fluxos.items()):
                 expirados = [
                     vizinho for vizinho, limite in estado.destinos.items()
@@ -556,8 +613,9 @@ def main() -> None:
     parser.add_argument("--player", type=int, nargs="?", const=PORTA_PLAYER, default=None,
                         metavar="PORTA",
                         help=f"entrega o vídeo ao player em localhost (sem valor: {PORTA_PLAYER})")
-    parser.add_argument("--ver", action="append", default=[], metavar="SERVIDOR:STREAM",
-                        help="vídeo a pedir e entregar ao player, assim que houver pai; ex: 1:0")
+    parser.add_argument("--ver", action="append", default=[], metavar="[SERVIDOR:]VIDEO",
+                        help="vídeo a pedir e entregar ao player: 'k' ao servidor mais barato, "
+                             "'servidor:k' a esse servidor; ex: 0 ou 1:0")
     args = parser.parse_args()
     try:
         ipaddress.ip_address(args.ip_bootstrapper)
@@ -572,8 +630,14 @@ def main() -> None:
         datefmt="%H:%M:%S",
     )
     try:
-        fluxos = set()
+        fluxos, videos = set(), set()
         for v in args.ver:
+            if ":" not in v:
+                video = int(v)
+                if not 0 <= video <= 255:
+                    raise ValueError(f"vídeo inválido: {v}")
+                videos.add(video)
+                continue
             servidor, stream = v.split(":")
             fluxo = (int(servidor), int(stream))
             NoOTT._validar_fluxo(fluxo)
@@ -582,6 +646,7 @@ def main() -> None:
                    portas_servidor=args.servidor,
                    player=None if args.player is None else (LOCALHOST, args.player))
         no.fluxos_player = fluxos
+        no.videos_pedidos = videos
         asyncio.run(no.run())
     except KeyboardInterrupt:
         log.info("nó OTT terminado")
