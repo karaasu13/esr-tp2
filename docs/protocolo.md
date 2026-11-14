@@ -119,6 +119,12 @@ inteiro (a soma das ligações).
   `WITHDRAW`, passa logo ao vizinho viável mais barato. Se não houver nenhum, envia `WITHDRAW`
   e fica sem pai até chegar um anúncio viável (em geral, de uma ronda mais nova do que a última
   que anunciou).
+- **Falta de vídeo do pai.** Um nó com um fluxo ativo que fica **300 ms** sem `DATA` do pai
+  (6 frames a 20 por segundo) passa ao vizinho viável mais barato, se houver. Não dá o pai
+  como em baixo no transporte, só troca de pai; sem vizinho viável, fica com o pai e volta a
+  tentar de 0,25 em 0,25 s. Só vigia depois de ter chegado o primeiro `DATA` do pai atual, para
+  não disparar no arranque nem logo a seguir a uma troca. O ciclo corre de 0,25 em 0,25 s, por
+  isso a troca dá-se entre 0,3 e 0,55 s depois do último frame.
 - **`WITHDRAW` (perda de rota).** Corpo `{"srv": S}`, fiável, enviado a todos os vizinhos por um
   nó que perdeu o pai para o servidor S e não tem nenhum vizinho viável. Quem o recebe do seu
   pai trata-o como a queda do pai (mesma função: outro vizinho viável ou, sem nenhum, também

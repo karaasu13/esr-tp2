@@ -9,6 +9,7 @@ Secção 14 de docs/desenho-rotas-e-video.md:
   * se o pai cair, o anúncio dele expirar ou ele enviar WITHDRAW, passa logo ao mais barato dos
     vizinhos viáveis; se não houver nenhum, envia WITHDRAW a todos os vizinhos e fica sem pai
     até chegar uma ronda mais nova;
+  * se o pai deixar de enviar vídeo (300 ms num fluxo ativo), passa ao melhor vizinho viável;
   * troca por um vizinho viável claramente melhor (margem de 15% e 2 unidades), comparando
     anúncios da mesma ronda;
   * quando a rota muda, anuncia-a a todos os vizinhos menos ao pai.
@@ -179,6 +180,19 @@ class Rotas:
         rota.anuncios.pop(origem, None)
         if rota.pai == origem:
             self._trocar_pai(srv, rota, f"WITHDRAW de {origem}")
+
+    def pai_sem_video(self, srv: int, segundos: float) -> None:
+        """O pai deixou de enviar vídeo: passa ao melhor vizinho viável, se houver. Não dá o pai
+        como em baixo; sem alternativa viável, fica com ele."""
+        rota = self.servidores.get(srv)
+        if rota is None or rota.pai is None:
+            return
+        antigo = rota.pai
+        candidatos = [v for v, a in rota.anuncios.items() if v != antigo and rota.viavel(a)]
+        if candidatos:
+            del rota.anuncios[antigo]  # como na queda: volta a contar com o próximo anúncio dele
+            self._escolher_pai(srv, rota, candidatos,
+                               f"{segundos * 1000:.0f} ms sem vídeo de {antigo}")
 
     def vizinho_em_baixo(self, no: int) -> None:
         """Esquece os anúncios do vizinho; se era o pai, passa logo a outro."""

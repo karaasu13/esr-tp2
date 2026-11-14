@@ -436,6 +436,49 @@ class TestCenario2(unittest.IsolatedAsyncioTestCase):
                 nos[S1]._frame_do_servidor(0, frame)
             self.assertEqual([await receber(self.players[C1]) for _ in FRAMES], FRAMES)
 
+    async def test_sem_video_do_pai_troca_em_menos_de_1_s(self):
+        nos = await self._montar()
+        # Medidas fixas (o jitter em localhost varia alguns ms): ligação N3-N1 com custo 2,5,
+        # N3-N2 e N2-N1 com custo 1. O N3 fica com o N1 (pelo N2 custaria só menos 0,5, abaixo
+        # da margem), e o N2 anuncia menos do que o N3, por isso é uma reserva viável.
+        self._fixar_medidas(nos[N3], {N1: (0.0, 0.0015), N2: (0.0, 0.0)})
+        self._fixar_medidas(nos[N2], {N1: (0.0, 0.0)})
+        rota_n3 = nos[N3].rotas.servidores[S1]
+
+        def medidas_fixas_em_vigor():
+            a1, a2 = rota_n3.anuncios.get(N1), rota_n3.anuncios.get(N2)
+            return (a1 and a2 and a1.ronda == a2.ronda and rota_n3.viavel(a2)
+                    and abs((a1.custo - a2.custo) - 0.5) < 0.01)
+
+        await self._esperar(medidas_fixas_em_vigor)
+        self.assertEqual(nos[N3].rotas.pai(S1), N1)
+
+        async def video():  # 20 frames por segundo, como o Servidor.py
+            while True:
+                nos[S1]._frame_do_servidor(0, FRAMES[0])
+                await asyncio.sleep(0.05)
+
+        tarefa = asyncio.create_task(video())
+        self.addCleanup(tarefa.cancel)
+        await self._esperar(lambda: FLUXO in nos[N3]._ultimo_video)
+
+        enviar = nos[N1].transporte.send  # o N1 deixa de enviar DATA ao N3; o resto passa
+        nos[N1].transporte.send = lambda destino, tipo, *a, **kw: (
+            0 if tipo == Tipo.DATA and destino == N3 else enviar(destino, tipo, *a, **kw))
+        inicio = time.monotonic()
+        await self._esperar(lambda: nos[N3].rotas.pai(S1) == N2, timeout=1.0)
+        self.assertLess(time.monotonic() - inicio, 1.0)
+        self.assertIn(N1, nos[N3].transporte.neighbors)  # não deu o N1 como em baixo
+        await self._esperar(lambda: FLUXO in nos[N3]._ultimo_video)  # vídeo de novo, pelo N2
+        self.assertEqual(nos[N3].tabela_fluxos[FLUXO].pai, N2)
+
+    @staticmethod
+    def _fixar_medidas(no, medidas):
+        """Medidas fixas (rtt_min e jitter, em segundos) das ligações aos vizinhos indicados."""
+        rtt_min, jitter = no.transporte.rtt_min, no.transporte.jitter
+        no.transporte.rtt_min = lambda v: medidas[v][0] if v in medidas else rtt_min(v)
+        no.transporte.jitter = lambda v: medidas[v][1] if v in medidas else jitter(v)
+
     @staticmethod
     def _cortar(no, vizinho):
         """Deita fora tudo o que o nó envia ao vizinho."""

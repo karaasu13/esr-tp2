@@ -19,6 +19,7 @@ log = logging.getLogger("ott")
 RENOVACAO_JOIN = 2.0
 VALIDADE_DESTINO = 6.0
 PERIODO_PING = 5.0
+SEM_VIDEO = 0.3  # s sem DATA do pai num fluxo ativo (6 frames a 20 por segundo): procurar outro pai
 INTERVALOS_HELLO = (5, 10, 20, 40, 60)
 
 
@@ -68,6 +69,8 @@ class NoOTT:
         self._tarefas_aplicacao: list[asyncio.Task] = []
         self._ping_seq: dict[tuple[int, int], int] = {}
         self._ultima_renovacao: dict[tuple[int, int], float] = {}
+        # fluxo -> hora do último DATA do pai; só existe depois do 1.º DATA desse pai
+        self._ultimo_video: dict[tuple[int, int], float] = {}
         self._em_encerramento = False
 
     async def start(self, timeout: float = 15) -> None:
@@ -224,6 +227,7 @@ class NoOTT:
         if anterior is not None and self._ativo(fluxo) and anterior in self.transporte.neighbors:
             self.transporte.send(anterior, Tipo.LEAVE, {}, fiavel=True, fluxo=fluxo)
         estado.pai = pai
+        self._ultimo_video.pop(fluxo, None)  # o pai novo ainda não enviou vídeo: não vigiar já
         if pai is not None and self._registado and self._ativo(fluxo) and not self._servidor_local(fluxo):
             self._enviar_join(fluxo, pai, fiavel=True)
         self._registar_tabela()
@@ -313,7 +317,17 @@ class NoOTT:
             log.debug("[%s] DATA de %s para fluxo %s descartado", self.transporte.id,
                       origem, fluxo)
             return
+        self._ultimo_video[fluxo] = time.monotonic()
         self._distribuir_video(fluxo, rtp)
+
+    def _vigiar_video(self, agora: float) -> None:
+        """Fluxo ativo sem DATA do pai há mais de SEM_VIDEO: troca de pai, se houver viável."""
+        for fluxo, ultimo in list(self._ultimo_video.items()):
+            if not self._ativo(fluxo) or self._pai(fluxo) is None:
+                self._ultimo_video.pop(fluxo, None)  # volta a vigiar depois do próximo DATA
+            elif agora - ultimo > SEM_VIDEO:
+                # Sem vizinho viável fica com o pai e tenta outra vez na volta seguinte.
+                self.rotas.pai_sem_video(fluxo[0], agora - ultimo)
 
     def _receber_ping(self, origem: int, fluxo: tuple[int, int], corpo: dict) -> None:
         if origem != self._pai(fluxo) or not self._ativo(fluxo):
@@ -362,6 +376,7 @@ class NoOTT:
             await asyncio.sleep(0.25)
             self.rotas.expirar()
             agora = time.monotonic()
+            self._vigiar_video(agora)
             for fluxo, estado in list(self.tabela_fluxos.items()):
                 expirados = [
                     vizinho for vizinho, limite in estado.destinos.items()
