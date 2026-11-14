@@ -53,6 +53,11 @@ def custo(rtt_ms: float, jitter_ms: float, perda_pct: float, saltos: int) -> flo
     return rtt_ms + jitter_ms + 20 * perda_pct + saltos
 
 
+def melhor_pela_margem(novo: float, atual: float) -> bool:
+    """O custo novo ganha ao atual pela margem: mais de 15% e mais de 2 unidades."""
+    return novo < atual * (1 - MARGEM_RELATIVA) and atual - novo > MARGEM_ABSOLUTA
+
+
 @dataclass
 class Anuncio:
     """Último anúncio de um vizinho, já somada a ligação até ele."""
@@ -104,6 +109,11 @@ class Rotas:
     def pai(self, servidor: int) -> int | None:
         rota = self.servidores.get(servidor)
         return rota.pai if rota else None
+
+    def rota(self, servidor: int) -> Anuncio | None:
+        """O anúncio do pai (custo e vídeos do servidor), ou None se não há rota."""
+        rota = self.servidores.get(servidor)
+        return rota.anuncios.get(rota.pai) if rota and rota.pai is not None else None
 
     async def anunciar_servidor(self, videos: list[int]) -> None:
         """Ciclo do nó com servidor local: anuncia-se a todos os vizinhos até ser cancelado."""
@@ -160,8 +170,7 @@ class Rotas:
         atual = rota.anuncios[rota.pai]
         melhores = [v for v, a in rota.anuncios.items()
                     if v != rota.pai and a.ronda == atual.ronda and rota.viavel(a)
-                    and a.custo < atual.custo * (1 - MARGEM_RELATIVA)
-                    and atual.custo - a.custo > MARGEM_ABSOLUTA]
+                    and melhor_pela_margem(a.custo, atual.custo)]
         if not melhores:
             return False
         antigo = rota.pai

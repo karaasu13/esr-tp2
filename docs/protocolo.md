@@ -125,6 +125,12 @@ inteiro (a soma das ligações).
   tentar de 0,25 em 0,25 s. Só vigia depois de ter chegado o primeiro `DATA` do pai atual, para
   não disparar no arranque nem logo a seguir a uma troca. O ciclo corre de 0,25 em 0,25 s, por
   isso a troca dá-se entre 0,3 e 0,55 s depois do último frame.
+- **Servidor mais perto (só no cliente, `--ver k`).** Os servidores têm os mesmos vídeos pela
+  mesma ordem. O cliente pede o vídeo k ao servidor com rota mais barata entre os que o
+  anunciam em `videos`. Se esse servidor ficar sem rota (pai `None`), passa para o outro, se
+  houver rota (`LEAVE` do fluxo antigo, `JOIN` do novo); se o primeiro voltar e for mais barato
+  pela margem (15% e 2 unidades), volta para ele. O fluxo no cabeçalho continua a ser
+  (servidor, vídeo): os outros nós não mudam. No log: `vídeo k: servidor S (custo X)`.
 - **`WITHDRAW` (perda de rota).** Corpo `{"srv": S}`, fiável, enviado a todos os vizinhos por um
   nó que perdeu o pai para o servidor S e não tem nenhum vizinho viável. Quem o recebe do seu
   pai trata-o como a queda do pai (mesma função: outro vizinho viável ou, sem nenhum, também

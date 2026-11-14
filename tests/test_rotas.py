@@ -503,5 +503,81 @@ class TestCenario2(unittest.IsolatedAsyncioTestCase):
             parte.close()
 
 
+@patch.object(ott_rotas, "PERIODO_ANUNCIO", 0.2)
+@patch.object(ott_rotas, "VALIDADE_ANUNCIO", 0.6)
+class TestDoisServidores(unittest.IsolatedAsyncioTestCase):
+    """S1 - A - B - S2, com C1 ligado ao A e C2 ao B; os clientes pedem só o vídeo 0 (--ver 0).
+    Medidas fixas: todas as ligações a 0 ms, menos A-B com 25 ms. Pelo lado de cada cliente o
+    servidor mais perto custa 2 e o outro 28."""
+
+    S1, A, B, S2, C1, C2 = 1, 2, 3, 4, 5, 6
+    LIGACOES = [(1, 2), (2, 3), (3, 4), (2, 5), (3, 6)]
+
+    async def _montar(self):
+        S1, A, B, S2, C1, C2 = self.S1, self.A, self.B, self.S2, self.C1, self.C2
+        porta = porta_livre()
+        dados = {
+            "bootstrapper": {"host": "127.0.0.7", "port": porta},
+            "nodes": {f"127.0.0.{no}": no for no in range(1, 7)},
+            "links": [{"node1": a, "ip1": f"127.0.0.{a}", "node2": b, "ip2": f"127.0.0.{b}"}
+                      for a, b in self.LIGACOES],
+        }
+        with tempfile.TemporaryDirectory() as pasta:
+            config = Path(pasta) / "config.json"
+            config.write_text(json.dumps(dados), encoding="utf-8")
+            configuracao = carregar_configuracao(config)
+        self.players = {C1: player_falso(), C2: player_falso()}
+        for player in self.players.values():
+            self.addCleanup(player.close)
+
+        def criar(no, **opcoes):
+            return NoOTT("127.0.0.7", porta_bootstrapper=porta, host=f"127.0.0.{no}",
+                         porta=porta, **opcoes)
+
+        bootstrapper = Bootstrapper(configuracao)
+        nos = {no: criar(no) for no in (A, B)}
+        for servidor in (S1, S2):
+            nos[servidor] = criar(servidor, portas_servidor=[0])
+        for cliente, player in self.players.items():
+            nos[cliente] = criar(cliente, player=player.getsockname())
+            nos[cliente].videos_pedidos = {0}  # como --ver 0
+        for no, t in nos.items():
+            vizinhos = [b for a, b in self.LIGACOES if a == no] + [a for a, b in self.LIGACOES if b == no]
+            TestCenario2._fixar_medidas(t, {v: (0.025 if {no, v} == {A, B} else 0.0, 0.0)
+                                            for v in vizinhos})
+        self.addAsyncCleanup(TestCenario2._fechar, bootstrapper, *nos.values())
+
+        await bootstrapper.start()
+        await asyncio.gather(*(nos[no].start() for no in (A, B, C1, C2)))
+        await TestCenario2._esperar(lambda: all(
+            b in nos[a]._confirmados and a in nos[b]._confirmados
+            for a, b in self.LIGACOES if not {a, b} & {S1, S2}))
+        await asyncio.gather(nos[S1].start(), nos[S2].start())
+        return nos
+
+    async def test_cada_cliente_fica_com_o_mais_barato_e_troca_quando_o_seu_para(self):
+        S1, A, B, S2, C1, C2 = self.S1, self.A, self.B, self.S2, self.C1, self.C2
+        esperar = TestCenario2._esperar
+        nos = await self._montar()
+        await esperar(lambda: nos[C1]._servidor_do_video.get(0) == S1
+                      and nos[C2]._servidor_do_video.get(0) == S2)
+        await esperar(lambda: set(nos[S1].tabela_fluxos[(S1, 0)].destinos) == {A}
+                      and set(nos[S2].tabela_fluxos[(S2, 0)].destinos) == {B})
+        for servidor, cliente in ((S1, C1), (S2, C2)):
+            for frame in FRAMES:
+                nos[servidor]._frame_do_servidor(0, frame)
+            self.assertEqual([await receber(self.players[cliente]) for _ in FRAMES], FRAMES)
+
+        await nos[S1].shutdown()  # o S1 para: o C1 passa a pedir o vídeo 0 ao S2
+        await esperar(lambda: nos[C1]._servidor_do_video.get(0) == S2)
+        self.assertNotIn((S1, 0), nos[C1].fluxos_player)  # o fluxo antigo foi largado
+        await esperar(lambda: set(nos[B].tabela_fluxos[(S2, 0)].destinos) == {A, C2})
+        for frame in FRAMES:
+            nos[S2]._frame_do_servidor(0, frame)
+        for player in self.players.values():
+            self.assertEqual([await receber(player) for _ in FRAMES], FRAMES)
+        self.assertEqual(nos[C2]._servidor_do_video[0], S2)
+
+
 if __name__ == "__main__":
     unittest.main()

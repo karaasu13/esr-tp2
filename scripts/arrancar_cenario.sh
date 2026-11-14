@@ -10,8 +10,9 @@
 # Cada janela também grava o que mostra em logs/cenarioN-<nó>[-<programa>].log.
 # Para parar tudo: o botão Stop do CORE.
 #
-# Ordem: bootstrapper, nós intermédios, clientes e players, e o nó do servidor por último
-# (nesta versão das rotas, o primeiro pai que um nó escolhe fica para sempre).
+# Ordem: bootstrapper, nós intermédios, clientes e players, e os servidores por último, para o
+# 1.º anúncio já encontrar as ligações feitas. No cenário 3 há dois servidores com o mesmo vídeo
+# e os clientes pedem só o vídeo 0 (--ver 0): cada um fica com o servidor mais barato.
 set -euo pipefail
 
 PROJ="$(cd "$(dirname "$0")/.." && pwd)"
@@ -78,15 +79,17 @@ case "$CENARIO" in
   sed 's/"port": 5000/"port": 5001/' "$PROJ/configs/cenario3.json" > /tmp/cenario3-bootstrapper.json
   BOOT="10.0.21.20 --porta 5001"
   no N4 "python3 -m bootstrapper /tmp/cenario3-bootstrapper.json" bootstrapper
-  for n in N4 N1 N2 N3 N5 N6 S2; do
+  for n in N4 N1 N2 N3 N5 N6; do
     no "$n" "python3 -m ott $BOOT"
   done
   for c in C1 C2 C3 C4 C5; do
     no "$c" "python3 player/Cliente.py" player
-    no "$c" "python3 -m ott $BOOT --player --ver 17:0"
+    no "$c" "python3 -m ott $BOOT --player --ver 0"
   done
-  no S1 "python3 player/Servidor.py videos/movie.Mjpeg" video
-  no S1 "python3 -m ott $BOOT --servidor"
+  for s in S1 S2; do
+    no "$s" "python3 player/Servidor.py videos/movie.Mjpeg" video
+    no "$s" "python3 -m ott $BOOT --servidor"
+  done
   ;;
 *)
   echo "Uso: sudo -E bash $0 2|3" >&2
