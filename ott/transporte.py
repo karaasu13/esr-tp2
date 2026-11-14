@@ -178,10 +178,6 @@ class Transporte(asyncio.DatagramProtocol):
             """Envia um REGISTER_ACK, devolvendo o id da mensagem."""
             return self.send(no, Tipo.REGISTER_ACK, {"id": id_novo, "vizinhos": vizinhos}, fiavel=True) 
 
-    def keepalive(self, no: int) -> int:
-        """Envia um KEEPALIVE fiável para o vizinho, devolvendo o id da mensagem."""
-        return self.send(no, Tipo.KEEPALIVE, {}, fiavel=True)
-
 
     def send(
         self,
