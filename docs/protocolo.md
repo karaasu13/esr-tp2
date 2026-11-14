@@ -99,14 +99,19 @@ Corpo do `ANNOUNCE` (JSON, não fiável):
 - Guarda o último anúncio de cada vizinho, por servidor, já somada a ligação:
   `rtt + RTT da ligação em ms` (100 ms se ainda não houver RTT) e `saltos + 1`.
   O custo por esse vizinho é `rtt + saltos`, ou seja, o custo anunciado mais `RTT da ligação + 1`.
-- Sem pai, fica com o vizinho de custo mais baixo.
+- Sem pai, fica com o vizinho de custo mais baixo entre os **viáveis** (regra abaixo).
 - O anúncio de um vizinho vale 6 s (3 períodos). Se não for renovado, é apagado. Se não sobrar
   nenhum anúncio para um servidor, a rota para ele desaparece; quando o servidor deixa de
   anunciar, isto acontece em toda a rede.
 - Só troca de pai se o pai cair (idle timeout, `CLOSE` ou reinício) ou se o anúncio dele
-  expirar. Nesse caso passa logo ao vizinho mais barato entre os que têm anúncio da ronda mais
-  recente. Se não houver nenhum, fica sem pai até chegar um anúncio de uma ronda mais nova do
-  que a última que anunciou.
+  expirar. Nesse caso passa logo ao vizinho viável mais barato. Se não houver nenhum, fica sem
+  pai até chegar um anúncio viável (em geral, de uma ronda mais nova do que a última que anunciou).
+- **Regra anti-ciclo (viabilidade), em todas as escolhas de pai.** Um vizinho só pode ser pai se
+  o anúncio dele for de uma ronda mais nova do que a última que este nó anunciou, ou da mesma
+  ronda com um custo anunciado (`rtt + saltos` do corpo) menor do que o menor custo que este nó
+  anunciou nessa ronda. Quem recebe o fluxo através deste nó só conhece rondas que este nó já
+  anunciou e anuncia sempre mais (soma pelo menos uma ligação e 1 salto), por isso nunca é
+  viável: não se formam ciclos. É a condição de viabilidade do Babel (RFC 8966) e do EIGRP.
 - Quando escolhe um pai ou recebe uma ronda nova do pai, anuncia a todos os vizinhos menos ao
   pai, com a ronda do pai e o seu próprio `rtt` e `saltos`.
 - Quando o pai de um servidor muda, chama `definir_pai` para cada vídeo desse servidor que está

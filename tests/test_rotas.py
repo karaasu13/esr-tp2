@@ -66,28 +66,45 @@ class TestRotas(unittest.TestCase):
         self.assertNotIn(3, rotas.servidores[9].anuncios)
         self.assertEqual(self.mudancas, [(9, 2)])
 
-    def test_pai_cai_passa_logo_ao_melhor_da_ronda_mais_recente(self):
+    def test_pai_cai_passa_logo_ao_melhor_viavel(self):
         rotas = self.rotas
-        rotas.receber(2, anuncio(10))
-        rotas.receber(3, anuncio(10, rtt=1.0, saltos=1))  # custo 103
-        rotas.receber(4, anuncio(11, rtt=50.0, saltos=2))  # custo 55, ronda mais recente
+        rotas.receber(2, anuncio(10))  # pai 2; este nó anuncia a ronda 10 com custo 2
+        rotas.receber(3, anuncio(10, rtt=1.0, saltos=1))  # anuncia 2, não menos do que eu: não viável
+        rotas.receber(4, anuncio(11, rtt=50.0, saltos=2))  # ronda mais nova: viável
         rotas.vizinho_em_baixo(2)
         self.assertEqual(rotas.pai(9), 4)
 
-        rotas.vizinho_em_baixo(4)  # o 3 só tem a ronda 10, mais antiga do que a 11 do pai
+        rotas.vizinho_em_baixo(4)  # o 3 só tem a ronda 10, mais antiga do que a 11 que anunciei
+        self.assertIsNone(rotas.pai(9))
+        rotas.receber(3, anuncio(11, rtt=90.0, saltos=3))  # mesma ronda que anunciei, custo maior
+        self.assertIsNone(rotas.pai(9))
+        rotas.receber(3, anuncio(12, rtt=90.0, saltos=3))  # ronda mais nova: viável
         self.assertEqual(rotas.pai(9), 3)
-        rotas.vizinho_em_baixo(3)  # sem ninguém: a rota desaparece
-        self.assertIsNone(rotas.pai(9))
-        rotas.receber(2, anuncio(11))  # não é mais nova do que a rota que se perdeu
-        self.assertIsNone(rotas.pai(9))
-        rotas.receber(2, anuncio(12))
+        self.assertEqual(self.mudancas, [(9, 2), (9, 4), (9, None), (9, 3)])
+
+    def test_reserva_da_mesma_ronda_so_se_anunciar_menos_do_que_eu(self):
+        rotas = self.rotas
+        rotas.receber(4, anuncio(10, rtt=3.0, saltos=2))  # pai 4; anuncio 5 + 2 = 7
+        rotas.receber(2, anuncio(10, rtt=4.0, saltos=2))  # anuncia 6 < 7: reserva válida
+        rotas.vizinho_em_baixo(4)
         self.assertEqual(rotas.pai(9), 2)
-        self.assertEqual(self.mudancas, [(9, 2), (9, 4), (9, 3), (9, None), (9, 2)])
+
+    def test_nunca_escolhe_quem_recebe_atraves_de_mim(self):
+        rotas = self.rotas
+        rotas.receber(2, anuncio(10))  # pai 2; anuncio a ronda 10 com custo 2
+        # O 3 recebe através de mim (somou a minha ligação): anuncia a mesma ronda com mais custo,
+        # mesmo que, pelas medições deste nó, ir por ele pareça barato.
+        rotas.receber(3, anuncio(10, rtt=1.5, saltos=2))
+        rotas.vizinho_em_baixo(2)
+        self.assertIsNone(rotas.pai(9))
+        rotas.servidores[9].anuncios[3].recebido -= ott_rotas.VALIDADE_ANUNCIO + 1
+        rotas.expirar()
+        self.assertNotIn(9, rotas.servidores)
 
     def test_servidor_para_e_as_rotas_expiram(self):
         rotas = self.rotas
-        rotas.receber(2, anuncio(10))
-        rotas.receber(4, anuncio(10, rtt=5.0, saltos=2))
+        rotas.receber(2, anuncio(10))  # anuncio 2
+        rotas.receber(4, anuncio(10, rtt=0.5, saltos=1))  # anuncia 1,5 < 2: reserva válida
         rotas.servidores[9].anuncios[2].recebido -= ott_rotas.VALIDADE_ANUNCIO + 1
         rotas.expirar()  # o anúncio do pai expirou: passa ao 4
         self.assertEqual(rotas.pai(9), 4)
@@ -96,6 +113,108 @@ class TestRotas(unittest.TestCase):
         self.assertIsNone(rotas.pai(9))
         self.assertNotIn(9, rotas.servidores)
         self.assertEqual(self.mudancas, [(9, 2), (9, 4), (9, None)])
+
+
+class RedeFalsa:
+    """Vários Rotas ligados em memória. As mensagens vão para uma fila e são entregues por
+    ordem de envio, como numa rede em que todas as ligações têm o mesmo atraso."""
+
+    def __init__(self, ligacoes):
+        self.rtt = {}
+        for a, b, ms in ligacoes:
+            self.rtt[a, b] = self.rtt[b, a] = ms / 1000
+        nos = {n for a, b, _ in ligacoes for n in (a, b)}
+        self.fila = []
+        self.rotas = {n: Rotas(self._transporte(n), lambda srv, pai: None) for n in nos}
+
+    def _transporte(self, no):
+        rede = self
+
+        class T:
+            id = no
+
+            @property
+            def neighbors(self):
+                return sorted(b for a, b in rede.rtt if a == no)
+
+            def rtt(self, outro):
+                return rede.rtt.get((no, outro))
+
+            def send(self, destino, tipo, corpo=None, fiavel=False, fluxo=(0, 0)):
+                if (no, destino) in rede.rtt:
+                    rede.fila.append((destino, no, corpo))
+        return T()
+
+    def entregar(self):
+        while self.fila:
+            destino, origem, corpo = self.fila.pop(0)
+            self.rotas[destino].receber(origem, corpo)
+
+    def anunciar(self, srv, ronda):
+        for v in self.rotas[srv].transporte.neighbors:
+            self.fila.append((v, srv, {"srv": srv, "ronda": ronda, "videos": [0],
+                                       "rtt": 0.0, "saltos": 0}))
+        self.entregar()
+
+    def cortar(self, a, b):
+        del self.rtt[a, b], self.rtt[b, a]
+        self.rotas[a].vizinho_em_baixo(b)
+        self.rotas[b].vizinho_em_baixo(a)
+        self.entregar()
+
+    def expirar_anuncios_de(self, no, vizinho, srv):
+        anuncio = self.rotas[no].servidores[srv].anuncios.get(vizinho)
+        if anuncio:
+            anuncio.recebido -= ott_rotas.VALIDADE_ANUNCIO + 1
+        self.rotas[no].expirar()
+        self.entregar()
+
+    def pais(self, srv):
+        return {n: r.pai(srv) for n, r in self.rotas.items() if n != srv}
+
+    def sem_ciclos(self, srv):
+        pais = self.pais(srv)
+        for inicio in pais:
+            vistos, n = set(), inicio
+            while n is not None and n != srv:
+                if n in vistos:
+                    return False
+                vistos.add(n)
+                n = pais.get(n)
+        return True
+
+
+class TestAnel(unittest.TestCase):
+    """Anel S - A - B - C - S: cortar uma ligação nunca forma ciclos e a rede recupera."""
+
+    def test_corte_no_anel_sem_ciclos(self):
+        S, A, B, C = 1, 2, 3, 4
+        rede = RedeFalsa([(S, A, 1), (A, B, 1), (B, C, 5), (C, S, 1)])
+        rede.anunciar(S, 10)
+        self.assertEqual(rede.pais(S), {A: S, B: A, C: S})
+
+        rede.cortar(S, A)  # o B recebe através do A: o A não o pode escolher
+        self.assertTrue(rede.sem_ciclos(S))
+        self.assertIsNone(rede.pais(S)[A])
+
+        rede.anunciar(S, 11)  # chega ao C e daí ao B, que ainda tem o A como pai
+        self.assertTrue(rede.sem_ciclos(S))
+        rede.expirar_anuncios_de(B, A, S)  # o anúncio do A não é renovado: o B passa ao C
+        self.assertTrue(rede.sem_ciclos(S))
+        self.assertEqual(rede.pais(S)[B], C)
+        rede.anunciar(S, 12)  # a ronda nova chega ao A pelo B
+        self.assertTrue(rede.sem_ciclos(S))
+        self.assertEqual(rede.pais(S), {A: B, B: C, C: S})
+
+    def test_servidor_cai_e_ninguem_se_escolhe_mutuamente(self):
+        S, A, B = 1, 2, 3
+        rede = RedeFalsa([(S, A, 1), (S, B, 2), (A, B, 1)])
+        rede.anunciar(S, 10)
+        rede.cortar(S, A)
+        rede.cortar(S, B)
+        self.assertTrue(rede.sem_ciclos(S))
+        pais = rede.pais(S)
+        self.assertFalse(pais[A] == B and pais[B] == A)
 
 
 @patch.object(ott_rotas, "PERIODO_ANUNCIO", 0.2)
