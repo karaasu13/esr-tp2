@@ -2,6 +2,9 @@
 import asyncio
 import unittest
 
+from unittest.mock import patch
+
+from ott import transporte as ott_transporte
 from ott.protocolo import CABECALHO, Flag, Pacote, Tipo
 from ott.transporte import Transporte
 
@@ -80,6 +83,27 @@ class TestTransporte(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(1.0)  # ~3x o idle timeout, sem tráfego da aplicação
         self.assertEqual(self.down, {1: [], 2: []})
         self.assertIsNotNone(a.rtt(2))  # RTT medido só com os keepalive
+
+    async def test_com_trafego_continua_a_medir_rtt(self):
+        a, b = await self.par(keepalive=0.05)
+        self.assertIsNone(a.rtt_min(2))
+        for _ in range(40):  # sem pausas maiores do que o keepalive
+            a.send(2, Tipo.DATA, b"frame", fluxo=(1, 0))
+            await asyncio.sleep(0.01)
+        self.assertGreaterEqual(len(a._amostras_rtt[2]), 5)
+        self.assertIsNotNone(a.rtt_min(2))
+        self.assertLessEqual(a.rtt_min(2), a.rtt(2) + 1e-9)
+        self.assertIsNotNone(a.jitter(2))
+        self.assertEqual(a.perda(2), 0.0)
+
+    async def test_perda_aproxima_se_da_simulada(self):
+        a, b = await self.par(perda=0.3, keepalive=0.02, idle_timeout=10)
+        b.perda_simulada = 0.0  # só se perde o que o 1 envia (30% no sentido 1 -> 2)
+        with patch.object(ott_transporte, "ESPERA_ACK_KEEPALIVE", 0.2):
+            await asyncio.sleep(1.5)
+            self.assertEqual(len(a._vizinhos[2].keepalives), ott_transporte.AMOSTRAS_PERDA)
+            self.assertAlmostEqual(a.perda(2), 0.3, delta=0.2)  # perdem-se os KEEPALIVE do 1
+            self.assertAlmostEqual(b.perda(1), 0.3, delta=0.2)  # perdem-se os ACK do 1 (ida e volta)
 
     async def test_deteta_vizinho_morto(self):
         a, b = await self.par()

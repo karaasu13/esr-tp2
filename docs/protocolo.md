@@ -137,8 +137,9 @@ expirarem (6 s), ou até o limite de 16 saltos cortar um ciclo maior.
 
 ## Vizinhos vivos (keepalive e idle timeout)
 
-- Se um nó não enviou nada a um vizinho nos últimos **0,5 s**, envia-lhe um `KEEPALIVE`. Assim só há keepalive quando a ligação está parada.
-- O KEEPALIVE pede ACK, para medir o RTT mesmo sem tráfego, mas não é retransmitido: o seguinte faz esse papel.
+- Cada nó envia um `KEEPALIVE` a cada vizinho de **0,5 em 0,5 s**, haja ou não tráfego. Com vídeo a passar continua a haver medições.
+- O KEEPALIVE pede ACK, para medir o RTT e a perda, mas não é retransmitido: o seguinte faz esse papel.
+- Medidas por vizinho, usadas no custo das rotas: `rtt_min` (mínimo das últimas 10 amostras de RTT), `jitter` (o `rttvar` do RFC 6298) e `perda` (fração dos últimos 20 KEEPALIVE sem ACK em 1 s; mede a ida e a volta juntas).
 - Quando um vizinho é dado como em baixo, a memória de duplicados dele é apagada: se voltar, é uma ligação nova.
 - Se não chega **nada** de um vizinho durante **3,5 s** (cerca de 7 oportunidades de dar sinal), o vizinho é dado como em baixo, as mensagens pendentes para ele são canceladas e é chamado `on_neighbor_down(id)`.
 
@@ -154,6 +155,8 @@ t.add_neighbor(2, ("10.0.0.1", 5000))  # passa a ter keepalive e idle timeout
 t.send(2, Tipo.HELLO, {...}, fiavel=True)
 t.send(5, Tipo.DATA, rtp_bytes, fluxo=(1, 0))  # vídeo, sem fiabilidade
 t.rtt(2)                             # RTT suavizado em segundos (ou None)
+t.rtt_min(2) / t.jitter(2)           # segundos (ou None)
+t.perda(2)                           # fração de 0 a 1 (ou None)
 t.neighbors / t.remove_neighbor(2) / t.close()
 
 def cb(origem, tipo, corpo, fluxo, addr): ...   # corpo: dict (controlo) ou bytes (DATA)

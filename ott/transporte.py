@@ -8,6 +8,7 @@ O que este módulo garante a quem o usa (bootstrapper, vizinhos, rotas, streamin
   * on_neighbor_down(id): chamado quando um vizinho deixa de dar sinal (idle timeout).
     Mensagens fiáveis para um vizinho são retransmitidas até haver ACK ou até ele cair.
   * rtt(id): RTT suavizado até ao vizinho, medido com os ACK (métrica da Etapa 2).
+  * rtt_min(id), jitter(id), perda(id): as três medidas da ligação que as rotas usam no custo.
 
 Ideias do QUIC usadas (ver docs/protocolo.md):
   * nº de pacote nunca reutilizado, nem nas retransmissões -> RTT sem ambiguidade;
@@ -21,7 +22,7 @@ import asyncio
 import logging
 import random
 import time
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -37,7 +38,7 @@ OnMessage = Callable[[int, int, "dict | bytes", tuple[int, int], Endereco], None
 OnNeighborDown = Callable[[int], None]
 
 # Valores por omissão dos temporizadores (segundos)
-KEEPALIVE = 0.5  # envia KEEPALIVE se não enviou nada ao vizinho neste intervalo
+KEEPALIVE = 0.5  # envia um KEEPALIVE a cada vizinho neste intervalo, haja ou não tráfego
 # (com 1 s havia ~1,5 falsos "em baixo" por hora com 20% de perda; com 0,5 s, nenhum em 10 h:
 #  ver scripts/sim_falsos_alarmes.py e o doc do protocolo)
 IDLE_TIMEOUT = 3.5  # vizinho morto se não se recebe nada dele neste tempo (~7 keepalives)
@@ -47,6 +48,9 @@ RTO_MAX = 2.0  # teto do backoff, para não ficar minutos à espera
 MAX_TENTATIVAS = 5  # para não vizinhos; para vizinhos só avisa e continua (decide o idle timeout)
 
 MAX_ENVIOS_GUARDADOS = 4096  # para o cálculo do RTT
+AMOSTRAS_RTT_MIN = 10  # rtt_min = mínimo das últimas N amostras
+AMOSTRAS_PERDA = 20  # perda = fração dos últimos N KEEPALIVE sem ACK
+ESPERA_ACK_KEEPALIVE = 1.0  # um KEEPALIVE sem ACK neste tempo conta como perdido
 MAX_VISTOS_POR_ORIGEM = 1024  # para a deteção de duplicados
 
 
@@ -68,7 +72,8 @@ class _Pendente:
 class _Vizinho:
     addr: Endereco
     ultimo_rx: float
-    ultimo_tx: float = 0.0
+    ultimo_keepalive: float = 0.0
+    keepalives: deque = field(default_factory=lambda: deque(maxlen=AMOSTRAS_PERDA))  # True = com ACK
 
 
 class Transporte(asyncio.DatagramProtocol):
@@ -94,7 +99,7 @@ class Transporte(asyncio.DatagramProtocol):
         self.rto_inicial = rto_inicial
         self.rto_max = rto_max
         self.max_tentativas = max_tentativas
-        self.perda = perda  # perda simulada no envio, só para testes fora do CORE
+        self.perda_simulada = perda  # perda simulada no envio, só para testes fora do CORE
         self._rand = random.Random(seed)
 
         self._transport: asyncio.DatagramTransport | None = None
@@ -109,6 +114,8 @@ class Transporte(asyncio.DatagramProtocol):
         self._envios: OrderedDict[int, tuple[float, int]] = OrderedDict()  # pn -> (t, destino)
         self._vistos: dict[tuple[Endereco, int], OrderedDict[int, None]] = {}
         self._rtt: dict[int, list[float]] = {}  # ID -> [srtt, rttvar]
+        self._amostras_rtt: dict[int, deque] = {}  # ID -> últimas amostras de RTT
+        self._keepalives_pendentes: dict[int, tuple[float, int]] = {}  # pn -> (t, vizinho)
 
     # ------------------------------------------------------------ ciclo de vida
     async def start(self, host: str = "0.0.0.0", porta: int = PORTA) -> None:
@@ -160,6 +167,23 @@ class Transporte(asyncio.DatagramProtocol):
         """RTT suavizado (segundos) até ao nó, ou None se ainda não há medições."""
         r = self._rtt.get(no)
         return r[0] if r else None
+
+    def rtt_min(self, no: int) -> float | None:
+        """Mínimo das últimas AMOSTRAS_RTT_MIN amostras de RTT (segundos), ou None."""
+        amostras = self._amostras_rtt.get(no)
+        return min(amostras) if amostras else None
+
+    def jitter(self, no: int) -> float | None:
+        """Variação do RTT (rttvar do RFC 6298, segundos), ou None."""
+        r = self._rtt.get(no)
+        return r[1] if r else None
+
+    def perda(self, no: int) -> float | None:
+        """Fração (0 a 1) dos últimos AMOSTRAS_PERDA KEEPALIVE sem ACK a tempo, ou None."""
+        v = self._vizinhos.get(no)
+        if v is None or not v.keepalives:
+            return None
+        return v.keepalives.count(False) / len(v.keepalives)
 
     # ------------------------------------------------------------ envio
     def hello(self, no: int) -> int:
@@ -223,10 +247,7 @@ class Transporte(asyncio.DatagramProtocol):
             self._envios[pn] = (time.monotonic(), destino)
             if len(self._envios) > MAX_ENVIOS_GUARDADOS:
                 self._envios.popitem(last=False)
-        v = self._vizinhos.get(destino)
-        if v:
-            v.ultimo_tx = time.monotonic()
-        if self.perda and self._rand.random() < self.perda:
+        if self.perda_simulada and self._rand.random() < self.perda_simulada:
             log.debug("[%s] (perda simulada) %s pn=%d -> %s", self.id, nome_tipo(tipo), pn, destino)
             return pn
         self._transport.sendto(pacote.codificar(), addr)
@@ -342,11 +363,15 @@ class Transporte(asyncio.DatagramProtocol):
         if envio:
             t, destino = envio
             self._amostra_rtt(destino, time.monotonic() - t)
+        keepalive = self._keepalives_pendentes.pop(pn, None)
+        if keepalive and keepalive[1] in self._vizinhos:
+            self._vizinhos[keepalive[1]].keepalives.append(True)  # a tempo: os atrasados já saíram
         id_msg = self._pn_para_msg.get(pn)
         if id_msg is not None and id_msg in self._pendentes:
             self._esquecer(self._pendentes[id_msg])
 
     def _amostra_rtt(self, no: int, amostra: float) -> None:
+        self._amostras_rtt.setdefault(no, deque(maxlen=AMOSTRAS_RTT_MIN)).append(amostra)
         r = self._rtt.get(no)
         if r is None:
             self._rtt[no] = [amostra, amostra / 2]
@@ -360,12 +385,20 @@ class Transporte(asyncio.DatagramProtocol):
         while True:
             await asyncio.sleep(passo)
             agora = time.monotonic()
+            for pn, (t, no) in list(self._keepalives_pendentes.items()):
+                if agora - t > ESPERA_ACK_KEEPALIVE:
+                    del self._keepalives_pendentes[pn]
+                    if no in self._vizinhos:
+                        self._vizinhos[no].keepalives.append(False)
             for no, v in list(self._vizinhos.items()):
                 if agora - v.ultimo_rx > self.idle_timeout:
                     self._vizinho_morreu(no, f"sem sinal há {agora - v.ultimo_rx:.1f} s")
-                elif agora - v.ultimo_tx >= self.keepalive:
-                    # Pede ACK (para medir RTT) mas não é retransmitido: o próximo faz esse papel.
+                elif agora - v.ultimo_keepalive >= self.keepalive:
+                    # A intervalos certos, mesmo com vídeo a passar, para haver sempre medições.
+                    # Pede ACK (RTT e perda) mas não é retransmitido: o próximo faz esse papel.
+                    v.ultimo_keepalive = agora
                     pn = self._proximo_pn()
+                    self._keepalives_pendentes[pn] = (agora, no)
                     self._enviar(v.addr, no, Tipo.KEEPALIVE, b"", FLUXO_CONTROLO,
                                  Flag.FIAVEL, id_msg=pn, pn=pn)
 
