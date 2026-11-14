@@ -36,8 +36,10 @@ class Tipo(IntEnum):
     ACK = 0x06
     CLOSE = 0x07
     # 0x10–0x1F: mensagens de gestão de fluxos e rotas
+    ANNOUNCE = 0x10
     JOIN = 0x11
     LEAVE = 0x12
+    WITHDRAW = 0x13
     PING = 0x14
     DATA = 0x20
 

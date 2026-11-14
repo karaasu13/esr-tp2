@@ -164,11 +164,9 @@ class TestVideoDeNoANo(unittest.IsolatedAsyncioTestCase):
         fluxo_expirado = (3, 0)
         agora = time.monotonic()
         no._registado = True
-        no.pais_video[fluxo_renovado] = 2
         no.tabela_fluxos[fluxo_renovado] = FluxoVideo(pai=2, local=True)
         no._ultima_renovacao[fluxo_renovado] = agora - 3
         no.tabela_fluxos[fluxo_expirado] = FluxoVideo(destinos={4: agora - 1})
-        no.rotas_video[fluxo_expirado] = {4}
         enviados = []
         renovado = asyncio.Event()
 
@@ -188,7 +186,6 @@ class TestVideoDeNoANo(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn((2, Tipo.JOIN, {"fiavel": False, "fluxo": fluxo_renovado}), enviados)
         self.assertNotIn(4, no.tabela_fluxos[fluxo_expirado].destinos)
-        self.assertNotIn(4, no.rotas_video[fluxo_expirado])
 
     async def test_ping_acrescenta_o_no_e_reencaminha_para_destinos(self):
         no = NoOTT("127.0.0.1")
@@ -196,11 +193,9 @@ class TestVideoDeNoANo(unittest.IsolatedAsyncioTestCase):
         no.transporte.add_neighbor(3, ("127.0.0.3", 5000))
         fluxo = (1, 0)
         no._registado = True
-        no.pais_video[fluxo] = 1
         no.tabela_fluxos[fluxo] = FluxoVideo(
             pai=1, destinos={3: time.monotonic() + 6}
         )
-        no.rotas_video[fluxo] = {3}
         enviados = []
         no.transporte.send = lambda destino, tipo, corpo, **kw: enviados.append(
             (destino, tipo, corpo, kw)
@@ -265,7 +260,7 @@ class TestVideoDeNoANo(unittest.IsolatedAsyncioTestCase):
 
     @staticmethod
     async def _esperar_sem_destino(no, vizinho):
-        while vizinho in no.rotas_video.get((1, 0), set()):
+        while vizinho in no._destinos((1, 0)):
             await asyncio.sleep(0.01)
 
     async def test_fluxo_fora_da_lista_nao_chega_ao_player(self):
@@ -276,7 +271,6 @@ class TestVideoDeNoANo(unittest.IsolatedAsyncioTestCase):
         self.addAsyncCleanup(lambda: no.video.close())
         no.fluxos_player = {(1, 0)}
         no._registado = True
-        no.pais_video[(1, 0)] = 7
         no.tabela_fluxos[(1, 0)] = FluxoVideo(pai=7, local=True)
         no._receber(7, Tipo.DATA, b"nao", (9, 0), ("127.0.0.1", 5000))
         no._receber(7, Tipo.DATA, b"sim", (1, 0), ("127.0.0.1", 5000))

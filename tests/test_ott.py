@@ -83,11 +83,9 @@ class TestArranqueOTT(unittest.IsolatedAsyncioTestCase):
         await self._esperar(lambda: 2 in no1._confirmados and 1 in no2._confirmados)
 
         fluxo = (1, 0)
-        no2.pais_video[fluxo] = 1
         no2.tabela_fluxos[fluxo] = ott_main.FluxoVideo(pai=1)
-        no2.rotas_video[fluxo] = {1}
         no1.transporte.hello(2)
-        await self._esperar(lambda: fluxo not in no2.pais_video)
+        await self._esperar(lambda: no2.tabela_fluxos[fluxo].pai is None)
 
         await no1.shutdown(timeout=1)
         await self._esperar(lambda: 1 in no2._caidos)

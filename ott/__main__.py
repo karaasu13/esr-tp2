@@ -56,14 +56,11 @@ class NoOTT:
         self._caidos: set[int] = set()
         self._registado = False
         # Vídeo: ligações locais (UDP em localhost) ao servidor e ao player.
-        # `fluxos_player` e `destinos_locais` são provisórios: na Etapa 2 passam a ser
-        # preenchidos pelas rotas (JOIN / anúncios) em vez de configurados à mão.
+        # `fluxos_player` é provisório: na Etapa 2 passa a ser preenchido pelas rotas
+        # (JOIN / anúncios) em vez de configurado à mão.
         self.video = PontaVideo(self._frame_do_servidor, portas_servidor, player, host=host_video)
         self.fluxos_player: set[tuple[int, int]] = set()  # fluxos entregues ao player local
-        self.destinos_locais: set[int] = set()  # vizinhos a quem enviar o vídeo do servidor local
-        self.rotas_video: dict[tuple[int, int], set[int]] = {}  # fluxo -> vizinhos a jusante
-        self.tabela_fluxos: dict[tuple[int, int], FluxoVideo] = {}
-        self.pais_video: dict[tuple[int, int], int] = {}
+        self.tabela_fluxos: dict[tuple[int, int], FluxoVideo] = {}  # pai e destinos de cada fluxo
         self._hellos_recebidos: set[int] = set()
         self._tarefas_religacao: dict[int, asyncio.Task] = {}
         self._tarefas_aplicacao: list[asyncio.Task] = []
@@ -175,7 +172,6 @@ class NoOTT:
         if not self._registado:
             return  # ainda sem ID, não há fluxo para nomear
         fluxo = (self.transporte.id, stream)
-        self._sincronizar_destinos_locais(fluxo)
         if self._ativo(fluxo):
             self._distribuir_video(fluxo, rtp)
 
@@ -183,7 +179,7 @@ class NoOTT:
         """Entrega o pacote ao player local e/ou reenvia-o aos vizinhos a jusante."""
         if fluxo in self.fluxos_player:
             self.video.entregar_ao_player(rtp)
-        for vizinho in self.rotas_video.get(fluxo, ()):
+        for vizinho in self._destinos(fluxo):
             if vizinho in self.transporte.neighbors:
                 self.transporte.send(vizinho, Tipo.DATA, rtp, fluxo=fluxo)  # sem fiabilidade
 
@@ -193,9 +189,8 @@ class NoOTT:
         self.fluxos_player.add(fluxo)
         estado = self._estado_fluxo(fluxo)
         estado.local = True
-        pai = self.pais_video.get(fluxo)
-        if self._registado and pai is not None:
-            self._enviar_join(fluxo, pai, fiavel=True)
+        if self._registado and estado.pai is not None:
+            self._enviar_join(fluxo, estado.pai, fiavel=True)
 
     def desistir_video(self, fluxo: tuple[int, int]) -> None:
         """Remove o interesse local e propaga LEAVE se já não houver destinos."""
@@ -217,12 +212,8 @@ class NoOTT:
         if anterior is not None and self._ativo(fluxo) and anterior in self.transporte.neighbors:
             self.transporte.send(anterior, Tipo.LEAVE, {}, fiavel=True, fluxo=fluxo)
         estado.pai = pai
-        if pai is None:
-            self.pais_video.pop(fluxo, None)
-        else:
-            self.pais_video[fluxo] = pai
-            if self._registado and self._ativo(fluxo) and not self._servidor_local(fluxo):
-                self._enviar_join(fluxo, pai, fiavel=True)
+        if pai is not None and self._registado and self._ativo(fluxo) and not self._servidor_local(fluxo):
+            self._enviar_join(fluxo, pai, fiavel=True)
         self._registar_tabela()
 
     @staticmethod
@@ -237,14 +228,19 @@ class NoOTT:
     def _estado_fluxo(self, fluxo: tuple[int, int]) -> FluxoVideo:
         estado = self.tabela_fluxos.setdefault(fluxo, FluxoVideo())
         estado.local = fluxo in self.fluxos_player
-        pai = self.pais_video.get(fluxo)
-        if estado.pai is None and pai is not None:
-            estado.pai = pai
         return estado
 
     def _ativo(self, fluxo: tuple[int, int]) -> bool:
         estado = self.tabela_fluxos.get(fluxo)
         return bool(estado and estado.ativo)
+
+    def _pai(self, fluxo: tuple[int, int]) -> int | None:
+        estado = self.tabela_fluxos.get(fluxo)
+        return estado.pai if estado else None
+
+    def _destinos(self, fluxo: tuple[int, int]) -> list[int]:
+        estado = self.tabela_fluxos.get(fluxo)
+        return list(estado.destinos) if estado else []
 
     def _servidor_local(self, fluxo: tuple[int, int]) -> bool:
         return (
@@ -253,16 +249,8 @@ class NoOTT:
             and 0 <= fluxo[1] < len(self.video.portas_pedidas)
         )
 
-    def _sincronizar_destinos_locais(self, fluxo: tuple[int, int]) -> None:
-        estado = self._estado_fluxo(fluxo)
-        destinos = self.rotas_video.setdefault(fluxo, set())
-        for vizinho in self.destinos_locais:
-            if vizinho in self._vizinhos_configurados:
-                estado.destinos.setdefault(vizinho, None)
-                destinos.add(vizinho)
-
     def _receber_join(self, origem: int, fluxo: tuple[int, int]) -> None:
-        if origem not in self._confirmados or origem == self.pais_video.get(fluxo):
+        if origem not in self._confirmados or origem == self._pai(fluxo):
             log.warning("[%s] JOIN inválido de %s para %s", self.transporte.id, origem, fluxo)
             return
         try:
@@ -274,7 +262,6 @@ class NoOTT:
         estado = self._estado_fluxo(fluxo)
         ja_ativo = self._ativo(fluxo)
         estado.destinos[origem] = time.monotonic() + VALIDADE_DESTINO
-        self.rotas_video.setdefault(fluxo, set()).add(origem)
         if not ja_ativo:
             self._propagar_estado_fluxo(fluxo)
         self._registar_tabela()
@@ -284,12 +271,11 @@ class NoOTT:
         if origem not in self._confirmados or estado is None:
             return
         estado.destinos.pop(origem, None)
-        self.rotas_video.get(fluxo, set()).discard(origem)
         self._propagar_estado_fluxo(fluxo)
         self._registar_tabela()
 
     def _propagar_estado_fluxo(self, fluxo: tuple[int, int]) -> None:
-        pai = self.pais_video.get(fluxo)
+        pai = self._pai(fluxo)
         if pai is None or not self._registado or self._servidor_local(fluxo):
             return
         if self._ativo(fluxo):
@@ -303,14 +289,14 @@ class NoOTT:
         self._ultima_renovacao[fluxo] = time.monotonic()
 
     def _receber_video(self, origem: int, fluxo: tuple[int, int], rtp: bytes) -> None:
-        if origem != self.pais_video.get(fluxo) or not self._ativo(fluxo):
+        if origem != self._pai(fluxo) or not self._ativo(fluxo):
             log.debug("[%s] DATA de %s para fluxo %s descartado", self.transporte.id,
                       origem, fluxo)
             return
         self._distribuir_video(fluxo, rtp)
 
     def _receber_ping(self, origem: int, fluxo: tuple[int, int], corpo: dict) -> None:
-        if origem != self.pais_video.get(fluxo) or not self._ativo(fluxo):
+        if origem != self._pai(fluxo) or not self._ativo(fluxo):
             return
         numero = corpo.get("n")
         caminho = corpo.get("caminho")
@@ -328,7 +314,7 @@ class NoOTT:
         caminho = [*caminho, {"id": self.transporte.id, "t": time.time()}]
         self._registar_ping(numero, fluxo, caminho)
         corpo_seguinte = {"n": numero, "caminho": caminho}
-        for destino in self.rotas_video.get(fluxo, ()):
+        for destino in self._destinos(fluxo):
             if destino in self.transporte.neighbors:
                 self.transporte.send(destino, Tipo.PING, corpo_seguinte, fluxo=fluxo)
 
@@ -361,7 +347,6 @@ class NoOTT:
                 ativo_antes = self._ativo(fluxo)
                 for vizinho in expirados:
                     estado.destinos.pop(vizinho, None)
-                    self.rotas_video.get(fluxo, set()).discard(vizinho)
                 if ativo_antes and not self._ativo(fluxo):
                     self._propagar_estado_fluxo(fluxo)
             for fluxo, estado in list(self.tabela_fluxos.items()):
@@ -381,7 +366,7 @@ class NoOTT:
                 caminho = [{"id": self.transporte.id, "t": time.time()}]
                 self._registar_ping(numero, fluxo, caminho)
                 corpo = {"n": numero, "caminho": caminho}
-                for destino in self.rotas_video.get(fluxo, ()):
+                for destino in self._destinos(fluxo):
                     if destino in self.transporte.neighbors:
                         self.transporte.send(destino, Tipo.PING, corpo, fluxo=fluxo)
 
@@ -425,9 +410,7 @@ class NoOTT:
             for fluxo in self.fluxos_player:
                 self._estado_fluxo(fluxo)
             for stream in range(len(self.video.portas_pedidas)):
-                fluxo = (identificador, stream)
-                self._estado_fluxo(fluxo)
-                self._sincronizar_destinos_locais(fluxo)
+                self._estado_fluxo((identificador, stream))
             log.info("[%s] registo aceite; vizinhos configurados: %d",
                      identificador, len(vizinhos))
             self._registar_tabela()
@@ -488,12 +471,10 @@ class NoOTT:
             self._agendar_religacao(no)
 
     def _limpar_estado_vizinho(self, no: int) -> None:
-        for fluxo, estado in self.tabela_fluxos.items():
+        for estado in self.tabela_fluxos.values():
             estado.destinos.pop(no, None)
-            self.rotas_video.get(fluxo, set()).discard(no)
             if estado.pai == no:
                 estado.pai = None
-                self.pais_video.pop(fluxo, None)
 
     def _agendar_religacao(self, no: int) -> None:
         tarefa = self._tarefas_religacao.get(no)
@@ -556,8 +537,6 @@ def main() -> None:
                         help=f"entrega o vídeo ao player em localhost (sem valor: {PORTA_PLAYER})")
     parser.add_argument("--ver", action="append", default=[], metavar="SERVIDOR:STREAM",
                         help="(provisório, até haver rotas) fluxo a entregar ao player; ex: 1:0")
-    parser.add_argument("--enviar-para", type=int, action="append", default=[], metavar="ID",
-                        help="(provisório, até haver rotas) vizinho a quem enviar o vídeo do servidor local")
     args = parser.parse_args()
     try:
         ipaddress.ip_address(args.ip_bootstrapper)
@@ -580,7 +559,6 @@ def main() -> None:
                    portas_servidor=args.servidor,
                    player=None if args.player is None else (LOCALHOST, args.player))
         no.fluxos_player = fluxos
-        no.destinos_locais = set(args.enviar_para)
         asyncio.run(no.run())
     except KeyboardInterrupt:
         log.info("nó OTT terminado")

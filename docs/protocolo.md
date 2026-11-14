@@ -49,8 +49,10 @@ Cabeçalho fixo de **14 bytes**, ordem de rede (`struct "!BBBHHIHB"`).
 | 0x05 | KEEPALIVE | pede ACK, não é retransmitido | vazio | transporte |
 | 0x06 | ACK | não | pn confirmado, 4 B binário | transporte |
 | 0x07 | CLOSE | sim | `{}` | nó vizinho |
+| 0x10 | ANNOUNCE | (reservado) | (por definir) | escolha de caminhos |
 | 0x11 | JOIN | sim no pedido inicial; não nas renovações | vazio; fluxo no cabeçalho | gestão de fluxos |
 | 0x12 | LEAVE | sim | vazio; fluxo no cabeçalho | gestão de fluxos |
+| 0x13 | WITHDRAW | (reservado) | (por definir) | escolha de caminhos |
 | 0x14 | PING | não | número e caminho acumulado | teste do caminho |
 | 0x20 | DATA | não | bytes do vídeo | streaming |
 
