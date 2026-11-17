@@ -5,13 +5,18 @@ Recebe pacotes RTP por UDP e mostra cada frame (JPEG). Alterações ao original:
 - o socket é lido numa thread, mas a janela só é atualizada na thread do Tk (after);
 - o frame é aberto em memória, sem ficheiro de cache;
 - conta os frames recebidos e em falta (pelo nº de sequência RTP) e mostra-os ao fechar;
+- escreve no stdout (que os scripts do CORE guardam no log) um resumo de 5 em 5 s e cada
+  paragem do vídeo (mais de 200 ms sem frame novo), com a hora;
 - tkMessageBox (Python 2) trocado por tkinter.messagebox.
 """
 from __future__ import annotations
 
 import io
+import os
 import socket
 import threading
+import time
+from datetime import datetime
 import tkinter.messagebox
 from tkinter import Button, Label, E, N, S, W
 
@@ -20,6 +25,15 @@ from PIL import Image, ImageTk
 from RtpPacket import RtpPacket, avanco_seq
 
 ATUALIZAR_MS = 20  # de quanto em quanto tempo a janela vai buscar o último frame
+RESUMO_S = 5  # de quanto em quanto tempo escreve o resumo no log
+PARAGEM_S = 0.2  # sem frame novo durante mais do que isto (4 frames a 20/s): escreve no log
+NOME = os.environ.get("OTT_NOME", "-")  # nome do nó, posto pelos scripts do CORE
+
+
+def registar(texto: str) -> None:
+    """Uma linha no mesmo formato dos logs dos nós, para o painel a ler."""
+    agora = datetime.now()
+    print(f"{agora:%H:%M:%S}.{agora.microsecond // 1000:03d} {NOME} INFO player: {texto}", flush=True)
 
 
 class ClienteGUI:
@@ -33,6 +47,9 @@ class ClienteGUI:
         self.recebidos = 0      # frames aceites
         self.atrasados = 0      # chegaram fora de ordem ou repetidos (descartados)
         self.primeiro = None    # 1.º frame visto (mesma contagem que frameNbr)
+        self.ultimo_t = None    # quando chegou o último frame aceite
+        self.atrasados_antes = 0  # atrasados até ao último frame aceite
+        self.ultimo_resumo = time.monotonic()
         self.ultimo_frame = None
         self.lock = threading.Lock()
         self.parar = threading.Event()
@@ -69,6 +86,7 @@ class ClienteGUI:
             rtp = RtpPacket()
             rtp.decode(data)
             seq = rtp.seqNum()
+            paragem = None
             with self.lock:
                 if self.ultimo_seq is None:  # 1.º frame
                     avanco = 1
@@ -77,6 +95,11 @@ class ClienteGUI:
                     avanco = avanco_seq(seq, self.ultimo_seq)
                 # descarta pacotes atrasados, como o original, mas aceita a volta 65535 -> 0
                 if avanco > 0:
+                    agora = time.monotonic()
+                    if self.ultimo_t is not None and agora - self.ultimo_t > PARAGEM_S:
+                        paragem = (agora - self.ultimo_t, self.frameNbr, self.frameNbr + avanco,
+                                   self.atrasados - self.atrasados_antes)
+                    self.ultimo_t, self.atrasados_antes = agora, self.atrasados
                     self.ultimo_seq = seq
                     self.frameNbr += avanco
                     if self.recebidos == 0:
@@ -85,11 +108,18 @@ class ClienteGUI:
                     self.ultimo_frame = rtp.getPayload()
                 else:
                     self.atrasados += 1
+            if paragem:
+                segundos, antes, depois, atrasados = paragem
+                registar(f"{segundos * 1000:.0f} ms sem frame novo (frame {antes} → {depois}: "
+                         f"{depois - antes - 1} em falta, {atrasados} atrasados)")
 
     def updateMovie(self):
         with self.lock:
             frame, self.ultimo_frame = self.ultimo_frame, None
             texto = self.resumo()
+        if time.monotonic() - self.ultimo_resumo >= RESUMO_S:
+            self.ultimo_resumo = time.monotonic()
+            registar(texto)
         if frame is not None:
             try:
                 photo = ImageTk.PhotoImage(Image.open(io.BytesIO(frame)))
@@ -112,7 +142,7 @@ class ClienteGUI:
     def exitClient(self):
         self.parar.set()
         with self.lock:
-            print(self.resumo())
+            registar(f"a sair: {self.resumo()}")
         self.rtpSocket.close()
         self.master.destroy()
 

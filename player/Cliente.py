@@ -6,6 +6,7 @@ lê pacotes RTP por UDP e mostra o vídeo numa janela.
 O nó overlay do cliente entrega-lhe o vídeo em localhost. Para receber diretamente
 de outra máquina (ex: teste no CORE sem overlay), usar ip 0.0.0.0.
 """
+import os
 import sys
 from tkinter import Tk
 
@@ -17,5 +18,9 @@ if __name__ == "__main__":
 
     root = Tk()
     app = ClienteGUI(root, addr, port)
-    app.master.title(f"Player {addr}:{port}")
+    nome, ident = os.environ.get("OTT_NOME"), os.environ.get("OTT_ID")  # postos pelos scripts do CORE
+    if nome:
+        app.master.title(f"{nome}{f' [{ident}]' if ident else ''} · player")
+    else:
+        app.master.title(f"Player {addr}:{port}")
     root.mainloop()

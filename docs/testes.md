@@ -124,7 +124,24 @@ sudo -E bash scripts/arrancar_cenario.sh 2     # cenário 2 (topologias/testte2.
 sudo -E bash scripts/arrancar_cenario.sh 3     # cenário 3 (topologias/underlay.xml)
 ```
 
-O script espera que os routers já encaminhem, arranca o bootstrapper, os nós, os players e por fim o servidor, e abre uma janela por programa com o nome do nó no título. Cada janela grava também em `logs/cenarioN-<nó>.log`. Para parar tudo, o Stop do CORE.
+O script espera que os routers já encaminhem e arranca o bootstrapper, os nós, os players e por fim os servidores. Os programas correm sem janela: cada um escreve em `logs/cenarioN-<nó>[-<programa>].log`, com o nome do nó em cada linha. Abrem-se só as janelas dos players (com o nome do nó no título) e um painel. Com `--janelas` no fim, abre uma janela por programa, como antes.
+
+**Painel** (`python3 scripts/painel.py 3`, aberto pelo script): lê os logs de 2 em 2 s e mostra o estado de cada nó, de quem recebe cada servidor, para onde envia, o caminho de cada cliente (último PING), o que o player contou (frames em falta, atrasados, última paragem) e os últimos acontecimentos, tudo com nomes. Só lê ficheiros: nenhum nó fica a conhecer a árvore.
+
+**Mexer num nó** a partir do terminal normal (cada ação fica marcada nos logs e aparece no painel):
+
+```bash
+sudo bash scripts/no.sh parar N1                # Ctrl+C: sai e avisa os vizinhos (CLOSE)
+sudo bash scripts/no.sh matar N1                # kill -9: falha sem aviso
+sudo bash scripts/no.sh arrancar N1             # volta a arrancar, com o comando do arranque
+sudo bash scripts/no.sh piorar C1 N1 delay 50ms # ou loss 2%, nos dois sentidos da ligação C1–N1
+sudo bash scripts/no.sh cortar C1 N1            # 100% de perda entre C1 e N1
+sudo bash scripts/no.sh repor C1 N1
+sudo bash scripts/no.sh correr C1 tc -s qdisc show
+sudo bash scripts/no.sh parar-tudo              # no fim, antes do Stop do CORE
+```
+
+Os programas correm em segundo plano, por isso o Stop do CORE não chega para os parar: usar o `parar-tudo` antes. O script de arranque também para o que tiver ficado de uma execução anterior.
 
 No cenário 3, o bootstrapper corre no PC do N4 (10.0.21.20) na porta 5001, para não chocar com o nó do N4 na porta 5000.
 

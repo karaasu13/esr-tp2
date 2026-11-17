@@ -1,53 +1,60 @@
 #!/usr/bin/env bash
-# Arranca um cenário inteiro no CORE com um só comando: bootstrapper, nós, players e servidor.
+# Arranca um cenário inteiro no CORE com um só comando: bootstrapper, nós, players e servidores.
 #
 # Uso (na máquina, fora do CORE, depois de abrir a topologia e carregar em Start):
-#   xhost +SI:localuser:root                  # uma vez por sessão gráfica, para as janelas abrirem
-#   sudo -E bash scripts/arrancar_cenario.sh 2   # cenário 2 (topologias/testte2.xml)
-#   sudo -E bash scripts/arrancar_cenario.sh 3   # cenário 3 (topologias/underlay.xml)
+#   xhost +SI:localuser:root                        # uma vez por sessão gráfica
+#   sudo -E bash scripts/arrancar_cenario.sh 3      # cenário 3 (topologias/underlay.xml)
+#   sudo -E bash scripts/arrancar_cenario.sh 2      # cenário 2 (topologias/testte2.xml)
+#   sudo -E bash scripts/arrancar_cenario.sh 3 --janelas   # uma janela por programa, como antes
 #
-# Abre uma janela (xterm) por programa, com o nome do nó no título, como o duplo clique no CORE.
-# Cada janela também grava o que mostra em logs/cenarioN-<nó>[-<programa>].log.
-# Para parar tudo: o botão Stop do CORE.
+# Os programas correm sem janela e o que escrevem fica em logs/cenarioN-<nó>[-<programa>].log,
+# com o nome do nó em cada linha. Abrem-se só as janelas dos players (com o nome do nó no título)
+# e um painel com o estado de todos os nós (scripts/painel.py).
+# Para mexer num nó (parar, matar, piorar ou cortar uma ligação): scripts/no.sh.
+# Para parar tudo: sudo bash scripts/no.sh parar-tudo, e depois o Stop do CORE.
 #
 # Ordem: bootstrapper, nós intermédios, clientes e players, e os servidores por último, para o
 # 1.º anúncio já encontrar as ligações feitas. No cenário 3 há dois servidores com os mesmos
 # 2 vídeos e os clientes pedem o vídeo 0 (--ver 0): cada um fica com o servidor mais barato.
 set -euo pipefail
 
-PROJ="$(cd "$(dirname "$0")/.." && pwd)"
 CENARIO="${1:-}"
-ESPERA=2  # segundos entre nós, para os vizinhos se apresentarem
+JANELAS=0
+[ "${2:-}" = "--janelas" ] && JANELAS=1
+# shellcheck source=comum.sh
+source "$(dirname "$0")/comum.sh"
+ESPERA=2  # segundos entre programas, para os vizinhos se apresentarem
 
-[ "$(id -u)" -eq 0 ] || { echo "Corre com sudo -E (os nós do CORE só aceitam comandos do root)." >&2; exit 1; }
-command -v vcmd >/dev/null || { echo "Não encontrei o vcmd (vem com o CORE)." >&2; exit 1; }
-command -v xterm >/dev/null || { echo "Não encontrei o xterm." >&2; exit 1; }
+case "$CENARIO" in
+  2|3) ;;
+  *) echo "Uso: sudo -E bash $0 2|3 [--janelas]" >&2; exit 1 ;;
+esac
+exigir_root
 [ -n "${DISPLAY:-}" ] || { echo "Sem DISPLAY: corre com sudo -E, a partir do ambiente gráfico." >&2; exit 1; }
+[ "$JANELAS" = 0 ] || command -v xterm >/dev/null || { echo "Não encontrei o xterm." >&2; exit 1; }
+sessao_core
+mkdir -p "$LOGS"
 
-sessoes=(/tmp/pycore.*)
-[ -d "${sessoes[0]}" ] || { echo "Não há nenhuma sessão do CORE a correr: abre a topologia e carrega em Start." >&2; exit 1; }
-[ "${#sessoes[@]}" -eq 1 ] || { echo "Há mais do que uma sessão do CORE (${sessoes[*]}): fecha as outras." >&2; exit 1; }
-SESSAO="${sessoes[0]}"
-mkdir -p "$PROJ/logs"
+n="$(parar_tudo)"
+[ "$n" -eq 0 ] || echo "Parei $n programa(s) que tinham ficado de uma execução anterior."
+rm -f "$LOGS"/cenario"$CENARIO"-*.log
+echo "$CENARIO" > "$LOGS/.cenario_atual"
+: > "$LOGS/cenario$CENARIO.comandos"  # para o no.sh conseguir voltar a arrancar um nó
 
-# no NOME "COMANDO" [SUFIXO]: abre uma janela a correr COMANDO dentro do nó NOME.
+# no NÓ "COMANDO" [SUFIXO]
 no() {
-  local nome="$1" cmd="$2" sufixo="${3:-}"
-  local titulo="$nome${sufixo:+ ($sufixo)}"
-  local log="$PROJ/logs/cenario$CENARIO-$nome${sufixo:+-$sufixo}.log"
-  [ -e "$SESSAO/$nome" ] || { echo "O nó $nome não existe nesta sessão: é a topologia certa?" >&2; exit 1; }
-  xterm -T "$titulo" -geometry 110x24 -e vcmd -c "$SESSAO/$nome" -- bash -c \
-    "cd '$PROJ' && export DISPLAY='$DISPLAY' PYTHONUNBUFFERED=1 && $cmd 2>&1 | tee '$log'; echo; echo '[terminou: Enter para fechar]'; read" &
-  echo "  $titulo: $cmd"
+  printf '%s\t%s\t%s\n' "$1" "${3:-}" "$2" >> "$LOGS/cenario$CENARIO.comandos"
+  lancar "$1" "$2" "${3:-}"
+  echo "  $1 ($(papel "$1" "${3:-}")): $2"
   sleep "$ESPERA"
 }
 
-# esperar_rede NO IP: espera até NO conseguir chegar a IP (encaminhamento dos routers pronto).
+# esperar_rede NÓ IP: espera até o NÓ chegar ao IP (encaminhamento dos routers pronto).
 esperar_rede() {
   local nome="$1" ip="$2"
   echo "À espera de que o $nome chegue a $ip (encaminhamento dos routers)..."
   for _ in $(seq 1 60); do
-    if vcmd -c "$SESSAO/$nome" -- ping -c 1 -W 1 "$ip" >/dev/null 2>&1; then
+    if dentro "$nome" ping -c 1 -W 1 "$ip" >/dev/null 2>&1; then
       echo "  rede pronta"
       return
     fi
@@ -94,11 +101,14 @@ case "$CENARIO" in
   no S1 "python3 -m ott $BOOT --servidor --servidor"
   no S2 "python3 -m ott $BOOT --servidor --servidor"
   ;;
-*)
-  echo "Uso: sudo -E bash $0 2|3" >&2
-  exit 1
-  ;;
 esac
 
 echo
-echo "Tudo arrancado. Os logs ficam em $PROJ/logs/cenario$CENARIO-*.log"
+echo "Tudo arrancado. Os logs ficam em logs/cenario$CENARIO-*.log"
+if command -v xterm >/dev/null; then
+  xterm -fa Monospace -fs 10 -geometry 150x50 -T "Painel do cenário $CENARIO" \
+    -e python3 "$PROJ/scripts/painel.py" "$CENARIO" &
+  echo "Abri o painel. Se o fechares: python3 scripts/painel.py $CENARIO"
+else
+  echo "Para ver o painel: python3 scripts/painel.py $CENARIO"
+fi
