@@ -126,7 +126,7 @@ No GitHub, a última alteração é de 11/11. Os 28 testes automáticos passam.
 **O que mudou em relação ao desenho proposto.** A Inês fez a parte dos fluxos de uma forma um pouco diferente:
 
 - A escolha do pai fica fora da tabela de fluxos: há uma função, `definir_pai(fluxo, pai)`, que os anúncios vão chamar. O pai é guardado por vídeo, e não por servidor como no desenho. É compatível: quando o pai para um servidor mudar, chama-se a função para cada vídeo desse servidor.
-- O pacote de vídeo continua sem a hora de envio. Fica para quando fizermos as medições no cliente.
+- O pacote de vídeo continua sem a hora de envio. Fica para quando fizermos as medições no cliente. *(Atualização a 17/11: feito; a hora de envio vai no timestamp RTP, em ms.)*
 - O caminho manual do vídeo (`--enviar-para` no nó do servidor) deixou de funcionar, porque um nó só aceita vídeo do pai e nada na linha de comando define o pai. **Neste momento não há forma de ver o vídeo pelo overlay no CORE.** Só o teste automático o faz, chamando `definir_pai` no código.
 
 **Falta:**
@@ -188,7 +188,8 @@ Cada pessoa trabalha num ramo seu do git (ex: `george/rotas`) e junta-o à `main
 - [ ] Confirmar no CORE os dois pontos que deixou em aberto na tabela de endereços (a ligação R5–R7 e o endereço do S1).
 - [x] O número do frame do vídeo só tem 16 bits. Agora o servidor dá a volta (65535 → 0) e o player aceita-a (aritmética de números de série, RFC 1982, como no RTP). Teste em `tests/test_rtp.py`.
 - [x] Opção `--servidor` repetida sem porta: agora o k-ésimo `--servidor` sem porta fica com 24000 + k (como no `Servidor.py`), e portas repetidas dão erro claro. O script do cenário 3 arranca os 2 vídeos em cada servidor.
-- [ ] Depois: medições no cliente (com a hora de envio no pacote de vídeo) e comparação com a solução sem overlay.
+- [x] Medições no cliente (hora de envio em ms no timestamp RTP, `player/Medidor.py`, `scripts/analisar_medicoes.py`, `scripts/debito_interface.py`, modo `--medir` no `arrancar_cenario.sh`) e comparação com a solução sem overlay, no cenário 3 com 1, 2 e 3 clientes (17/11). Resultados e conclusões em `docs/resultados-medicoes.md`.
+- [ ] Testes de falhas com medições (piorar uma ligação com `tc`, cortar a ligação do pai), depois de fechada a robustez das rotas. Repetir os testes com overlay se o caminho do vídeo ou o tráfego de controlo mudarem.
 
 **Atenção:** o player precisa do Tkinter e do Pillow, que não vêm com o Python. Os comandos para os instalar estão no README.
 
