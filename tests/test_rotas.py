@@ -351,14 +351,14 @@ class TestCenario2(unittest.IsolatedAsyncioTestCase):
         dados_s1 = self._contar_dados(nos[S1])
 
         # Só o C1 pede: o JOIN sobe sozinho e os frames chegam ao player.
-        await self._esperar(lambda: set(nos[S1].tabela_fluxos[FLUXO].destinos) == {N1})
+        await self._esperar(lambda: set(self._destinos(nos[S1])) == {N1})
         for frame in FRAMES:
             nos[S1]._frame_do_servidor(0, frame)
         self.assertEqual([await receber(self.players[C1]) for _ in FRAMES], FRAMES)
 
         # Os dois clientes a ver: o N1 reencaminha para N2 e N3, o S1 envia uma só cópia.
         nos[C2].pedir_video(FLUXO)
-        await self._esperar(lambda: set(nos[N1].tabela_fluxos[FLUXO].destinos) == {N2, N3})
+        await self._esperar(lambda: set(self._destinos(nos[N1])) == {N2, N3})
         dados_s1.clear()
         for frame in FRAMES:
             nos[S1]._frame_do_servidor(0, frame)
@@ -381,14 +381,14 @@ class TestCenario2(unittest.IsolatedAsyncioTestCase):
 
     async def test_ligacao_n1_n2_cai_e_o_n2_passa_pelo_n3(self):
         nos = await self._montar(ver_c2=True)
-        await self._esperar(lambda: set(nos[N1].tabela_fluxos[FLUXO].destinos) == {N2, N3})
+        await self._esperar(lambda: set(self._destinos(nos[N1])) == {N2, N3})
         for a, b in ((N1, N2), (N2, N1)):  # como tc com 100% de perda, nos dois sentidos
             self._cortar(nos[a], b)
             nos[a].transporte.idle_timeout = 1.0  # para o teste não esperar 3,5 s
 
         await self._esperar(lambda: nos[N2].rotas.pai(S1) == N3)
-        await self._esperar(lambda: N2 in nos[N3].tabela_fluxos[FLUXO].destinos)
-        await self._esperar(lambda: set(nos[N1].tabela_fluxos[FLUXO].destinos) == {N3})
+        await self._esperar(lambda: N2 in self._destinos(nos[N3]))
+        await self._esperar(lambda: set(self._destinos(nos[N1])) == {N3})
         dados_s1 = self._contar_dados(nos[S1])
         for frame in FRAMES:
             nos[S1]._frame_do_servidor(0, frame)
@@ -430,8 +430,8 @@ class TestCenario2(unittest.IsolatedAsyncioTestCase):
             await self._esperar(lambda: nos[N3].rotas.pai(S1) == N2
                                 and nos[C1].rotas.pai(S1) == N3
                                 and nos[N2].rotas.pai(S1) == N1)
-            await self._esperar(lambda: N3 in nos[N2].tabela_fluxos[FLUXO].destinos)
-            await self._esperar(lambda: N2 in nos[N1].tabela_fluxos[FLUXO].destinos)
+            await self._esperar(lambda: N3 in self._destinos(nos[N2]))
+            await self._esperar(lambda: N2 in self._destinos(nos[N1]))
             for frame in FRAMES:
                 nos[S1]._frame_do_servidor(0, frame)
             self.assertEqual([await receber(self.players[C1]) for _ in FRAMES], FRAMES)
@@ -478,6 +478,12 @@ class TestCenario2(unittest.IsolatedAsyncioTestCase):
         rtt_min, jitter = no.transporte.rtt_min, no.transporte.jitter
         no.transporte.rtt_min = lambda v: medidas[v][0] if v in medidas else rtt_min(v)
         no.transporte.jitter = lambda v: medidas[v][1] if v in medidas else jitter(v)
+
+    @staticmethod
+    def _destinos(no):
+        """Destinos do fluxo no nó (vazio enquanto o fluxo ainda não existe nesse nó)."""
+        estado = no.tabela_fluxos.get(FLUXO)
+        return estado.destinos if estado else {}
 
     @staticmethod
     def _cortar(no, vizinho):

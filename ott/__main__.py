@@ -6,6 +6,7 @@ import asyncio
 import ipaddress
 import logging
 import os
+import random
 from dataclasses import dataclass, field
 import time
 from typing import Sequence
@@ -22,7 +23,30 @@ RENOVACAO_JOIN = 2.0
 VALIDADE_DESTINO = 6.0
 PERIODO_PING = 5.0
 SEM_VIDEO = 0.3  # s sem DATA do pai num fluxo ativo (6 frames a 20 por segundo): procurar outro pai
-INTERVALOS_HELLO = (5, 10, 20, 40, 60)
+# HELLO periódico, que faz de apresentação, de sinal de vida e de nova tentativa de ligação
+# (como o Hello do OSPF e os pacotes do BFD). Ver docs/protocolo.md.
+HELLO_VIVO = 1.0  # intervalo para um vizinho vivo; é também o que cada nó anuncia no HELLO
+HELLO_EM_BAIXO = 5.0  # intervalo para um vizinho que não responde (em baixo ou ainda a arrancar)
+HELLOS_RAPIDOS = 3  # depois de cada mudança de estado, os 3 primeiros HELLOs vão a HELLO_VIVO
+PASSO_HELLO = 0.05
+MAX_ARRANQUE = (1 << 32) - 1
+
+
+@dataclass
+class EstadoVizinho:
+    """O que um nó sabe de cada vizinho configurado.
+
+    a arrancar: ainda não ouviu nenhum HELLO dele;
+    a ouvir: ouve os HELLOs dele, mas ele ainda não o ouve a ele (como o Init do OSPF);
+    vivo: ouvem-se os dois (os HELLOs dele trazem este nó em "ouvidos");
+    em baixo: estava vivo e calou-se (ou deixou de o ouvir);
+    saiu: avisou com CLOSE; não se lhe mandam HELLOs, porque é ele que se apresenta ao voltar.
+    """
+    estado: str = "a arrancar"
+    rapidos: int = HELLOS_RAPIDOS  # HELLOs que ainda vão a HELLO_VIVO, sem resposta
+    proximo: float = 0.0  # quando enviar o próximo HELLO
+    arranque: int | None = None  # nº de arranque visto nos HELLOs dele
+    ja_vivo: bool = False  # já esteve vivo (para dizer "voltou" em vez de "ativo")
 
 
 @dataclass
@@ -56,8 +80,9 @@ class NoOTT:
         self.transporte = Transporte(on_message=self._receber, on_neighbor_down=self._vizinho_em_baixo)
         self._registo: asyncio.Future[None] | None = None
         self._vizinhos_configurados: dict[int, Endereco] = {}
-        self._confirmados: set[int] = set()
-        self._caidos: set[int] = set()
+        self._vizinhos_estado: dict[int, EstadoVizinho] = {}
+        # Sorteado em cada arranque: quem o vir mudar nos HELLOs sabe que este nó reiniciou.
+        self.arranque = random.SystemRandom().randint(1, MAX_ARRANQUE)
         self._registado = False
         # Vídeo: ligações locais (UDP em localhost) ao servidor e ao player.
         # `fluxos_player` é provisório: na Etapa 2 passa a ser preenchido pelas rotas
@@ -70,14 +95,18 @@ class NoOTT:
         self._primeira_rota_do_video: dict[int, float] = {}  # quando apareceu a 1.ª opção
         self.tabela_fluxos: dict[tuple[int, int], FluxoVideo] = {}  # pai e destinos de cada fluxo
         self.rotas = Rotas(self.transporte, self._pai_mudou)  # escolhe o pai de cada servidor
-        self._hellos_recebidos: set[int] = set()
-        self._tarefas_religacao: dict[int, asyncio.Task] = {}
+        self._tarefa_hello: asyncio.Task | None = None
         self._tarefas_aplicacao: list[asyncio.Task] = []
         self._ping_seq: dict[tuple[int, int], int] = {}
         self._ultima_renovacao: dict[tuple[int, int], float] = {}
         # fluxo -> hora do último DATA do pai; só existe depois do 1.º DATA desse pai
         self._ultimo_video: dict[tuple[int, int], float] = {}
         self._em_encerramento = False
+
+    @property
+    def _confirmados(self) -> set[int]:
+        """Vizinhos vivos: os dois já se ouvem."""
+        return {no for no, ev in self._vizinhos_estado.items() if ev.estado == "vivo"}
 
     async def start(self, timeout: float = 15) -> None:
         self._registo = asyncio.get_running_loop().create_future()
@@ -129,9 +158,9 @@ class NoOTT:
         self.transporte.close()
 
     def _cancelar_tarefas(self) -> None:
-        for tarefa in self._tarefas_religacao.values():
-            tarefa.cancel()
-        self._tarefas_religacao.clear()
+        if self._tarefa_hello is not None:
+            self._tarefa_hello.cancel()
+            self._tarefa_hello = None
         for tarefa in self._tarefas_aplicacao:
             tarefa.cancel()
         self._tarefas_aplicacao.clear()
@@ -143,8 +172,8 @@ class NoOTT:
                 self._processar_registo(origem, corpo, addr)
             return
 
-        if tipo in (Tipo.HELLO, Tipo.HELLO_ACK):
-            self._processar_handshake(origem, tipo, corpo, addr)
+        if tipo == Tipo.HELLO:
+            self._processar_hello(origem, corpo, addr)
             return
 
         if tipo == Tipo.CLOSE:
@@ -153,8 +182,7 @@ class NoOTT:
                 return
             if origem not in self._confirmados:
                 return
-            self.transporte.remove_neighbor(origem)
-            self._vizinho_em_baixo(origem)
+            self._perder_vizinho(origem, "saiu")
             log.info("[%s] vizinho %s avisou que vai sair", self.transporte.id, origem)
             return
 
@@ -483,8 +511,9 @@ class NoOTT:
             self._vizinhos_configurados = vizinhos
             self._registado = True
             for no, endereco in vizinhos.items():
-                self.transporte.add_neighbor(no, endereco)
-                self.transporte.hello(no)
+                self.transporte.set_address(no, endereco)
+                self._vizinhos_estado[no] = EstadoVizinho()
+            self._tarefa_hello = asyncio.create_task(self._ciclo_hello())
             for fluxo in self.fluxos_player:
                 self._estado_fluxo(fluxo)
             for stream in range(len(self.video.portas_pedidas)):
@@ -496,57 +525,117 @@ class NoOTT:
         except (ValueError, TypeError) as exc:
             self._registo.set_exception(ValueError(f"REGISTER_ACK inválido: {exc}"))
 
-    def _processar_handshake(self, origem: int, tipo: int, corpo: dict | bytes,
-                             addr: Endereco) -> None:
+    # ------------------------------------------------------------ vizinhos (HELLO)
+    def _ouvidos(self) -> list[int]:
+        """Vizinhos de quem este nó está a ouvir HELLOs (vão no HELLO, como no OSPF)."""
+        return sorted(no for no, ev in self._vizinhos_estado.items()
+                      if ev.estado in ("a ouvir", "vivo"))
+
+    async def _ciclo_hello(self) -> None:
+        while True:
+            agora = time.monotonic()
+            for no, ev in list(self._vizinhos_estado.items()):
+                if ev.estado != "saiu" and agora >= ev.proximo:
+                    self._enviar_hello(no, ev, agora)
+            await asyncio.sleep(PASSO_HELLO)
+
+    def _enviar_hello(self, no: int, ev: EstadoVizinho, agora: float) -> None:
+        corpo = {"arranque": self.arranque, "intervalo": HELLO_VIVO, "ouvidos": self._ouvidos()}
+        try:
+            self.transporte.send(no, Tipo.HELLO, corpo, sonda=True)
+        except ValueError:
+            return
+        if ev.estado == "vivo":
+            ev.proximo = agora + HELLO_VIVO
+            return
+        if ev.rapidos > 0:
+            ev.rapidos -= 1
+            ev.proximo = agora + HELLO_VIVO
+            if ev.rapidos == 0:  # o próximo já vai devagar
+                log.info("[%s] vizinho %s sem resposta a %d HELLOs: passa a tentar de %g em %g s",
+                         self.transporte.id, no, HELLOS_RAPIDOS, HELLO_EM_BAIXO, HELLO_EM_BAIXO)
+        else:
+            ev.proximo = agora + HELLO_EM_BAIXO
+
+    @staticmethod
+    def _validar_hello(corpo) -> tuple[int, float, list[int]]:
+        if not isinstance(corpo, dict):
+            raise ValueError("o corpo não é um objeto")
+        arranque, intervalo = corpo.get("arranque"), corpo.get("intervalo")
+        ouvidos = corpo.get("ouvidos", [])
+        if isinstance(arranque, bool) or not isinstance(arranque, int) \
+                or not 1 <= arranque <= MAX_ARRANQUE:
+            raise ValueError("'arranque' inválido")
+        if isinstance(intervalo, bool) or not isinstance(intervalo, (int, float)) \
+                or not 0.05 <= intervalo <= 60:
+            raise ValueError("'intervalo' inválido")
+        if not isinstance(ouvidos, list) or not all(
+                isinstance(n, int) and not isinstance(n, bool) for n in ouvidos):
+            raise ValueError("'ouvidos' inválido")
+        return arranque, float(intervalo), ouvidos
+
+    def _processar_hello(self, origem: int, corpo: dict | bytes, addr: Endereco) -> None:
         esperado = self._vizinhos_configurados.get(origem)
-        if esperado is None or addr != esperado:
-            log.warning("[%s] %s de vizinho não configurado/inválido %s em %s",
-                        self.transporte.id, nome_tipo(tipo), origem, addr)
+        ev = self._vizinhos_estado.get(origem)
+        if esperado is None or ev is None or addr != esperado:
+            log.warning("[%s] HELLO de vizinho não configurado/inválido %s em %s",
+                        self.transporte.id, origem, addr)
             return
-        if corpo != {}:
-            log.warning("[%s] corpo inválido em %s de %s: %r",
-                        self.transporte.id, nome_tipo(tipo), origem, corpo)
+        try:
+            arranque, intervalo, ouvidos = self._validar_hello(corpo)
+        except ValueError as exc:
+            log.warning("[%s] corpo inválido em HELLO de %s: %s", self.transporte.id, origem, exc)
             return
+        agora = time.monotonic()
 
-        reiniciou = (
-            tipo == Tipo.HELLO
-            and origem in self._confirmados
-            and origem in self._hellos_recebidos
-        )
-        if reiniciou:
-            self._limpar_estado_vizinho(origem)
-            self._registar_tabela()
-            log.info("[%s] HELLO repetido de %s; estado antigo limpo (reinício)",
+        if ev.arranque is not None and arranque != ev.arranque and ev.estado in ("a ouvir", "vivo"):
+            log.info("[%s] vizinho %s reiniciou (nº de arranque novo); estado antigo limpo",
                      self.transporte.id, origem)
+            if ev.estado == "vivo":
+                self._perder_vizinho(origem, "a ouvir")
+            ev.proximo = agora  # responde já, para ele (de novo a arrancar) nos voltar a ouvir
+        ev.arranque = arranque
+        me_ouve = self.transporte.id in ouvidos
 
-        voltou = origem in self._caidos
-        if origem not in self.transporte.neighbors:
+        if ev.estado == "vivo":
+            self.transporte.set_intervalo(origem, intervalo)
+            if not me_ouve:  # a ligação deixou de funcionar no sentido de cá para lá
+                log.warning("[%s] vizinho %s deixou de me ouvir", self.transporte.id, origem)
+                self._perder_vizinho(origem, "a ouvir")
+                ev.proximo = agora  # responde já, para ele voltar a ouvir-me
+            return
+
+        if me_ouve:  # ouvem-se os dois: vivo
+            voltou = ev.ja_vivo
+            ev.estado, ev.ja_vivo, ev.rapidos = "vivo", True, HELLOS_RAPIDOS
             self.transporte.add_neighbor(origem, esperado)
-        self._caidos.discard(origem)
-        primeira_confirmacao = origem not in self._confirmados
-        self._confirmados.add(origem)
+            self.transporte.set_intervalo(origem, intervalo)
+            ev.proximo = agora  # responde já: o HELLO dele pode ter vindo antes de ouvir o meu
+            log.info("[%s] vizinho %s %s", self.transporte.id, origem, "voltou" if voltou else "ativo")
+            self._registar_tabela()
+        elif ev.estado != "a ouvir":
+            ev.estado, ev.rapidos = "a ouvir", HELLOS_RAPIDOS
+            ev.proximo = agora  # responde já, já com ele em "ouvidos"
 
-        if tipo == Tipo.HELLO:
-            self._hellos_recebidos.add(origem)
-            self.transporte.hello_ack(origem)
-        self._cancelar_religacao(origem)
-
-        if voltou:
-            log.info("[%s] vizinho %s voltou", self.transporte.id, origem)
-        elif primeira_confirmacao:
-            log.info("[%s] vizinho %s ativo", self.transporte.id, origem)
-        if voltou or primeira_confirmacao:
+    def _perder_vizinho(self, no: int, novo_estado: str, registar: bool = True) -> None:
+        """O vizinho deixou de estar vivo (saiu, reiniciou ou deixou de me ouvir)."""
+        ev = self._vizinhos_estado[no]
+        ev.estado, ev.rapidos = novo_estado, HELLOS_RAPIDOS
+        ev.proximo = time.monotonic() + HELLO_VIVO
+        self.transporte.remove_neighbor(no)
+        self._limpar_estado_vizinho(no)
+        if registar:
             self._registar_tabela()
 
     def _vizinho_em_baixo(self, no: int) -> None:
-        self._confirmados.discard(no)
-        self._caidos.add(no)
-        self._hellos_recebidos.discard(no)
+        """O transporte deixou de ouvir o vizinho dentro do limite de silêncio."""
+        ev = self._vizinhos_estado.get(no)
+        if ev is not None:
+            ev.estado, ev.rapidos = "em baixo", HELLOS_RAPIDOS
+            ev.proximo = time.monotonic() + HELLO_VIVO
         self._limpar_estado_vizinho(no)
         log.warning("[%s] vizinho %s removido da tabela", self.transporte.id, no)
         self._registar_tabela()
-        if not self._em_encerramento:
-            self._agendar_religacao(no)
 
     def _limpar_estado_vizinho(self, no: int) -> None:
         for estado in self.tabela_fluxos.values():
@@ -554,37 +643,6 @@ class NoOTT:
             if estado.pai == no:
                 estado.pai = None
         self.rotas.vizinho_em_baixo(no)
-
-    def _agendar_religacao(self, no: int) -> None:
-        tarefa = self._tarefas_religacao.get(no)
-        if tarefa is None or tarefa.done():
-            self._tarefas_religacao[no] = asyncio.create_task(self._tentar_religacao(no))
-
-    def _cancelar_religacao(self, no: int) -> None:
-        tarefa = self._tarefas_religacao.pop(no, None)
-        if tarefa is not None:
-            tarefa.cancel()
-
-    async def _tentar_religacao(self, no: int) -> None:
-        tentativa = 0
-        try:
-            while no in self._caidos and not self._em_encerramento:
-                espera = INTERVALOS_HELLO[min(tentativa, len(INTERVALOS_HELLO) - 1)]
-                await asyncio.sleep(espera)
-                if no not in self._caidos or self._em_encerramento:
-                    return
-                try:
-                    self.transporte.hello(no)
-                except ValueError:
-                    log.warning("[%s] sem endereço para tentar HELLO ao vizinho %s",
-                                self.transporte.id, no)
-                    return
-                tentativa += 1
-        except asyncio.CancelledError:
-            raise
-        finally:
-            if self._tarefas_religacao.get(no) is asyncio.current_task():
-                self._tarefas_religacao.pop(no, None)
 
     def _registar_tabela(self) -> None:
         vizinhos = [
