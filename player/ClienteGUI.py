@@ -17,7 +17,7 @@ from tkinter import Button, Label, E, N, S, W
 
 from PIL import Image, ImageTk
 
-from RtpPacket import RtpPacket
+from RtpPacket import RtpPacket, avanco_seq
 
 ATUALIZAR_MS = 20  # de quanto em quanto tempo a janela vai buscar o último frame
 
@@ -28,10 +28,11 @@ class ClienteGUI:
         self.master.protocol("WM_DELETE_WINDOW", self.handler)
         self.addr = addr
         self.port = int(port)
-        self.frameNbr = 0       # último nº de sequência mostrado
+        self.frameNbr = 0       # último frame mostrado, contado sem a volta dos 16 bits do RTP
+        self.ultimo_seq = None  # nº de sequência RTP (16 bits) desse frame
         self.recebidos = 0      # frames aceites
         self.atrasados = 0      # chegaram fora de ordem ou repetidos (descartados)
-        self.primeiro = None    # 1.º nº de sequência visto
+        self.primeiro = None    # 1.º frame visto (mesma contagem que frameNbr)
         self.ultimo_frame = None
         self.lock = threading.Lock()
         self.parar = threading.Event()
@@ -69,10 +70,17 @@ class ClienteGUI:
             rtp.decode(data)
             seq = rtp.seqNum()
             with self.lock:
-                if self.primeiro is None:
-                    self.primeiro = seq
-                if seq > self.frameNbr:  # descarta pacotes atrasados, como o original
-                    self.frameNbr = seq
+                if self.ultimo_seq is None:  # 1.º frame
+                    avanco = 1
+                    self.frameNbr = seq - 1
+                else:
+                    avanco = avanco_seq(seq, self.ultimo_seq)
+                # descarta pacotes atrasados, como o original, mas aceita a volta 65535 -> 0
+                if avanco > 0:
+                    self.ultimo_seq = seq
+                    self.frameNbr += avanco
+                    if self.recebidos == 0:
+                        self.primeiro = self.frameNbr
                     self.recebidos += 1
                     self.ultimo_frame = rtp.getPayload()
                 else:

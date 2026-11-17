@@ -1,6 +1,18 @@
 import sys
 from time import time
 HEADER_SIZE = 12
+SEQ_MOD = 1 << 16  # o nº de sequência do RTP tem 16 bits e dá a volta: ... 65534, 65535, 0, 1 ...
+
+
+def avanco_seq(novo, ultimo):
+	"""Quantos números o `novo` está à frente do `ultimo`, tendo em conta a volta aos 16 bits.
+
+	Aritmética de números de série (RFC 1982), como no RFC 3550: é mais novo se estiver menos
+	de meia volta (32768) à frente. Devolve 0 ou um número negativo se for repetido ou atrasado.
+	"""
+	dif = (novo - ultimo) % SEQ_MOD
+	return dif if dif < SEQ_MOD // 2 else dif - SEQ_MOD
+
 
 class RtpPacket:	
 	header = bytearray(HEADER_SIZE)
@@ -18,7 +30,8 @@ class RtpPacket:
 		header[0] = (header[0] | (cc & 0x0F)); # 4 bits
 		header[1] = (header[1] | marker << 7); # 1 bit
 		header[1] = (header[1] | (pt & 0x7f)); # 7 bits
-		header[2] = (seqnum >> 8); 
+		seqnum %= SEQ_MOD # dá a volta aos 16 bits em vez de rebentar no frame 65536
+		header[2] = (seqnum >> 8) & 0xFF;
 		header[3] = (seqnum & 0xFF);
 		header[4] = (timestamp >> 24);
 		header[5] = (timestamp >> 16) & 0xFF;

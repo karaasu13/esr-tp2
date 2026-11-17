@@ -186,7 +186,7 @@ Cada pessoa trabalha num ramo seu do git (ex: `george/rotas`) e junta-o à `main
 - [x] Topologia grande (`topologias/underlay.xml`), JSON do cenário 3 e tabela de endereços.
 - [x] Ligar o vídeo nas pontas, vídeo em ciclo e um 2.º vídeo.
 - [ ] Confirmar no CORE os dois pontos que deixou em aberto na tabela de endereços (a ligação R5–R7 e o endereço do S1).
-- [ ] O número do frame do vídeo só tem 16 bits: ao fim de 65 535 frames (cerca de 55 minutos a 20 por segundo) o programa de vídeo deixa de enviar. Não afeta testes curtos, mas convém dar a volta ao número (e o player aceitar a volta) antes da defesa.
+- [x] O número do frame do vídeo só tem 16 bits. Agora o servidor dá a volta (65535 → 0) e o player aceita-a (aritmética de números de série, RFC 1982, como no RTP). Teste em `tests/test_rtp.py`.
 - [ ] Opção `--servidor` repetida sem porta (`--servidor --servidor`) dá as duas vezes a porta 24000 e o nó não arranca. Ou se obriga a dar a porta a partir do 2.º vídeo, ou se soma 1 a cada um.
 - [ ] Depois: medições no cliente (com a hora de envio no pacote de vídeo) e comparação com a solução sem overlay.
 

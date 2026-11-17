@@ -31,7 +31,9 @@ class Servidor:
 					port = int(self.clientInfo['rtpPort'])
 					packet =  self.makeRtp(data, frameNumber)
 					self.clientInfo['rtpSocket'].sendto(packet,(address,port))
-				except:
+				except OSError:
+					# Erro de rede (ex: o nó local ainda não arrancou): tenta o frame seguinte.
+					# Outros erros são bugs: a thread termina e o Python mostra o traceback.
 					print("Connection Error")
 					print('-'*60)
 					traceback.print_exc(file=sys.stdout)
