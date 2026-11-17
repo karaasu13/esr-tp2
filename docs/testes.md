@@ -145,7 +145,35 @@ Três programas:
 O medidor e o player usam a mesma porta: num cliente corre um ou outro. O CSV é escrito linha a
 linha, por isso pode ficar em `logs/` e parar-se com Ctrl+C ou com o Stop do CORE.
 
-### Com overlay (cenário 2)
+### Com o script (recomendado)
+
+O `scripts/arrancar_cenario.sh` (secção 3) tem um modo de medição: arranca o que o teste precisa,
+com o medidor no lugar do player, mede durante `--duracao` segundos (60 por omissão) depois de
+todos os clientes arrancarem, para os medidores e mostra a análise.
+
+```bash
+sudo -E bash scripts/arrancar_cenario.sh 3 --medir overlay --clientes 1
+sudo -E bash scripts/arrancar_cenario.sh 3 --medir direto --clientes 1
+# ... repetir com --clientes 2 e 3 (Stop e Start no CORE entre testes)
+```
+
+- `--medir overlay`: bootstrapper, nós intermédios, o S1 com o vídeo 0 (no cenário 3, sem o S2),
+  e só depois os K clientes, cada um com o medidor e o nó OTT.
+- `--medir direto`: nenhum nó OTT; o S1 corre um `Servidor.py` por cliente, direto para o IP dele.
+- `--clientes K`: entram C1, …, CK (cenário 2: até 2; cenário 3: até 5). Por omissão, todos.
+
+Fica tudo em `logs/medicoes/cenarioN-<modo>-<K>cli/`: um CSV por cliente, `S1-debito.log`
+(débito da `eth0` do S1), `analise.txt` e o log de cada janela. Se a pasta já existir, a antiga
+muda de nome (com a data e a hora). Para comparar dois testes:
+
+```bash
+python3 scripts/analisar_medicoes.py logs/medicoes/cenario3-overlay-2cli/C1.csv logs/medicoes/cenario3-direto-2cli/C1.csv
+```
+
+Os testes de falhas (`tc`, cortar uma ligação) fazem-se com o modo overlay e um `--duracao`
+maior, mexendo na ligação durante a medição.
+
+### Com overlay, à mão (cenário 2)
 
 Arrancar o cenário como na secção 3 ou à mão, mas nos clientes trocar o player pelo medidor:
 
@@ -155,7 +183,7 @@ C1:  python3 -m ott 10.0.6.1 --player --ver 1:0
 S1:  python3 scripts/debito_interface.py eth0 --duracao 60
 ```
 
-### Sem overlay
+### Sem overlay, à mão
 
 Nenhum nó OTT: o S1 corre um `Servidor.py` por cliente, a enviar direto para o IP do cliente.
 
