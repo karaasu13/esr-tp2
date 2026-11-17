@@ -109,3 +109,29 @@ class TestArranqueOTT(unittest.IsolatedAsyncioTestCase):
             no.close()
         bootstrapper.close()
         await asyncio.sleep(0)
+
+
+class TestPortasServidor(unittest.TestCase):
+    def test_sem_porta_soma_o_numero_do_video(self):
+        self.assertEqual(ott_main.portas_servidor([None, None]), [24000, 24001])
+        self.assertEqual(ott_main.portas_servidor([25000, None]), [25000, 24001])
+        self.assertEqual(ott_main.portas_servidor([]), [])
+
+    def test_portas_repetidas_ou_invalidas_dao_erro(self):
+        for pedidas in ([24001, None], [24000, 24000], [0], [70000]):
+            with self.subTest(pedidas=pedidas), self.assertRaises(ValueError):
+                ott_main.portas_servidor(pedidas)
+
+    def test_linha_de_comando(self):
+        """`--servidor --servidor` chega ao nó como [24000, 24001]; repetidas param o arranque."""
+        argv = ["ott", "10.0.0.1", "--servidor", "--servidor"]
+        with patch("sys.argv", argv), patch.object(ott_main, "NoOTT") as no, \
+                patch.object(ott_main.asyncio, "run"):
+            ott_main.main()
+        self.assertEqual(no.call_args.kwargs["portas_servidor"], [24000, 24001])
+
+        argv = ["ott", "10.0.0.1", "--servidor", "24001", "--servidor"]
+        with patch("sys.argv", argv), patch.object(ott_main, "NoOTT") as no, \
+                patch("sys.stderr"), self.assertRaises(SystemExit):
+            ott_main.main()
+        no.assert_not_called()

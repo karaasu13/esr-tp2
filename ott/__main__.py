@@ -599,6 +599,21 @@ class NoOTT:
                      self.transporte.id, fluxo, estado.pai, destinos, estado.ativo)
 
 
+def portas_servidor(pedidas: Sequence[int | None]) -> list[int]:
+    """Portas do Servidor.py local, uma por vídeo, a partir das opções `--servidor`.
+
+    Um `--servidor` sem porta no k-ésimo lugar fica com PORTA_SERVIDOR + k (24000 para o vídeo 0,
+    24001 para o vídeo 1, ...), como no Servidor.py. Dá ValueError com portas inválidas ou repetidas.
+    """
+    portas = [PORTA_SERVIDOR + k if p is None else p for k, p in enumerate(pedidas)]
+    for porta in portas:
+        if not 1 <= porta <= 65535:
+            raise ValueError(f"porta de --servidor inválida: {porta}")
+    if len(set(portas)) != len(portas):
+        raise ValueError(f"portas de --servidor repetidas: {portas}")
+    return portas
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Arranca um nó OTT e regista-o no bootstrapper")
     parser.add_argument("ip_bootstrapper", help="IP do bootstrapper")
@@ -606,10 +621,10 @@ def main() -> None:
     parser.add_argument("--porta-local", type=int, default=PORTA,
                         help=f"porta UDP local (predefinição: {PORTA})")
     parser.add_argument("--servidor", type=int, action="append", metavar="PORTA", nargs="?",
-                        const=PORTA_SERVIDOR, default=[],
+                        const=None, default=[],
                         help="este nó tem servidor(es) local(is): escuta o Servidor.py em localhost "
-                             f"nesta porta (sem valor: {PORTA_SERVIDOR}); repetir para mais vídeos "
-                             "(o k-ésimo é o vídeo k)")
+                             f"nesta porta (sem valor: {PORTA_SERVIDOR} + k para o vídeo k); repetir "
+                             "para mais vídeos (o k-ésimo é o vídeo k)")
     parser.add_argument("--player", type=int, nargs="?", const=PORTA_PLAYER, default=None,
                         metavar="PORTA",
                         help=f"entrega o vídeo ao player em localhost (sem valor: {PORTA_PLAYER})")
@@ -621,6 +636,7 @@ def main() -> None:
         ipaddress.ip_address(args.ip_bootstrapper)
         if not 1 <= args.porta <= 65535 or not 1 <= args.porta_local <= 65535:
             parser.error("as portas têm de estar entre 1 e 65535")
+        args.servidor = portas_servidor(args.servidor)
     except ValueError as exc:
         parser.error(str(exc))
 

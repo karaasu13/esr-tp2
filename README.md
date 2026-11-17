@@ -66,7 +66,7 @@ No cenário 2, se o bootstrapper estiver no n7, usa um IP alcançável desse rou
 
 ```
 python3 player/Servidor.py videos/movie.Mjpeg [ip] [porta]   # envia ao nó local, 127.0.0.1:24000 por omissão (24001 para o 2.º vídeo)
-python3 -m ott <ip-do-bootstrapper> --servidor        # nó do servidor: escuta o Servidor.py (repetir --servidor PORTA por vídeo)
+python3 -m ott <ip-do-bootstrapper> --servidor        # nó do servidor: escuta o Servidor.py (um --servidor por vídeo: 24000, 24001, ...)
 python3 -m ott <ip-do-bootstrapper> --player          # nó do cliente: entrega ao player, 127.0.0.1:25000
 python3 player/Cliente.py                             # player
 ```
@@ -116,7 +116,7 @@ regista-o com o caminho percorrido.
 ### Cenário 3 no CORE (`topologias/underlay.xml`), com dois servidores
 
 O bootstrapper corre no PC do N4 (`10.0.21.20`) na porta 5001, com uma cópia do JSON com essa
-porta (é o que o script faz). Os dois servidores enviam o mesmo vídeo e os clientes pedem só o
+porta (é o que o script faz). Os dois servidores têm os mesmos 2 vídeos e os clientes pedem o
 vídeo 0, sem dizer a que servidor:
 
 ```
@@ -125,8 +125,9 @@ N4:  python3 -m bootstrapper /tmp/cenario3-bootstrapper.json
 N1, N2, N3, N4, N5, N6:  python3 -m ott 10.0.21.20 --porta 5001
 C1 a C5:  python3 player/Cliente.py
 C1 a C5:  python3 -m ott 10.0.21.20 --porta 5001 --player --ver 0
-S1, S2:   python3 player/Servidor.py videos/movie.Mjpeg
-S1, S2:   python3 -m ott 10.0.21.20 --porta 5001 --servidor
+S1, S2:   python3 player/Servidor.py videos/movie.Mjpeg 127.0.0.1 24000    # vídeo 0
+S1, S2:   python3 player/Servidor.py videos/movie2.Mjpeg 127.0.0.1 24001   # vídeo 1
+S1, S2:   python3 -m ott 10.0.21.20 --porta 5001 --servidor --servidor
 ```
 
 No log de cada cliente aparece `vídeo 0: servidor 17 (custo X)` (S1) ou `servidor 16` (S2), conforme

@@ -187,7 +187,7 @@ Cada pessoa trabalha num ramo seu do git (ex: `george/rotas`) e junta-o à `main
 - [x] Ligar o vídeo nas pontas, vídeo em ciclo e um 2.º vídeo.
 - [ ] Confirmar no CORE os dois pontos que deixou em aberto na tabela de endereços (a ligação R5–R7 e o endereço do S1).
 - [x] O número do frame do vídeo só tem 16 bits. Agora o servidor dá a volta (65535 → 0) e o player aceita-a (aritmética de números de série, RFC 1982, como no RTP). Teste em `tests/test_rtp.py`.
-- [ ] Opção `--servidor` repetida sem porta (`--servidor --servidor`) dá as duas vezes a porta 24000 e o nó não arranca. Ou se obriga a dar a porta a partir do 2.º vídeo, ou se soma 1 a cada um.
+- [x] Opção `--servidor` repetida sem porta: agora o k-ésimo `--servidor` sem porta fica com 24000 + k (como no `Servidor.py`), e portas repetidas dão erro claro. O script do cenário 3 arranca os 2 vídeos em cada servidor.
 - [ ] Depois: medições no cliente (com a hora de envio no pacote de vídeo) e comparação com a solução sem overlay.
 
 **Atenção:** o player precisa do Tkinter e do Pillow, que não vêm com o Python. Os comandos para os instalar estão no README.
