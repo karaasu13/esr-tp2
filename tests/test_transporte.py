@@ -8,7 +8,7 @@ from ott import transporte as ott_transporte
 from ott.protocolo import CABECALHO, Flag, Pacote, Tipo
 from ott.transporte import Transporte
 
-RAPIDO = dict(keepalive=0.1, idle_timeout=0.35, rto_inicial=0.05, rto_max=0.3)
+RAPIDO = dict(idle_timeout=0.35, rto_inicial=0.05, rto_max=0.3)
 
 
 class TestPacote(unittest.TestCase):
@@ -36,21 +36,40 @@ class TestPacote(unittest.TestCase):
 
 
 class TestTransporte(unittest.IsolatedAsyncioTestCase):
-    async def par(self, perda=0.0, **kw):
-        """Dois nós (1 e 2) vizinhos um do outro, em portas livres de localhost."""
+    async def par(self, perda=0.0, sondas=0.1, **kw):
+        """Dois nós (1 e 2) vizinhos um do outro, em portas livres de localhost.
+
+        Com sondas, cada um manda um HELLO de sonda ao outro nesse intervalo, como faz o nó
+        (ott/__main__.py): é o sinal de vida e dá as medidas de RTT e perda."""
         self.rx = {1: [], 2: []}
         self.down = {1: [], 2: []}
         nos = {}
         for i, seed in ((1, 11), (2, 22)):
             t = Transporte(i, perda=perda, seed=seed, **{**RAPIDO, **kw},
-                           on_message=lambda o, tp, c, f, a, i=i: self.rx[i].append((o, tp, c)),
+                           on_message=lambda o, tp, c, f, a, i=i: self._guardar(i, o, tp, c),
                            on_neighbor_down=lambda n, i=i: self.down[i].append(n))
             await t.start("127.0.0.1", 0)
             nos[i] = t
         nos[1].add_neighbor(2, nos[2].endereco_local)
         nos[2].add_neighbor(1, nos[1].endereco_local)
         self.addAsyncCleanup(self._fechar, nos)
+        if sondas:
+            for i, outro in ((1, 2), (2, 1)):
+                tarefa = asyncio.create_task(self._sondar(nos[i], outro, sondas))
+                self.addCleanup(tarefa.cancel)
         return nos[1], nos[2]
+
+    def _guardar(self, i, origem, tipo, corpo):
+        if not (isinstance(corpo, dict) and "sonda" in corpo):  # as sondas não interessam aqui
+            self.rx[i].append((origem, tipo, corpo))
+
+    @staticmethod
+    async def _sondar(t, outro, intervalo):
+        while True:
+            if t._transport is None or t._transport.is_closing():
+                return
+            t.send(outro, Tipo.HELLO, {"sonda": 1}, sonda=True)
+            await asyncio.sleep(intervalo)
 
     async def _fechar(self, nos):
         for t in nos.values():
@@ -78,16 +97,22 @@ class TestTransporte(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(recebidos, list(range(30)))  # todas, sem duplicados
         self.assertEqual(self.down[1], [])
 
-    async def test_keepalive_mantem_vizinho_vivo(self):
+    async def test_sondas_mantem_vizinho_vivo_e_medem_rtt(self):
         a, b = await self.par()
-        await asyncio.sleep(1.0)  # ~3x o idle timeout, sem tráfego da aplicação
+        await asyncio.sleep(1.0)  # ~3x o limite de silêncio, sem tráfego da aplicação
         self.assertEqual(self.down, {1: [], 2: []})
-        self.assertIsNotNone(a.rtt(2))  # RTT medido só com os keepalive
+        self.assertIsNotNone(a.rtt(2))  # RTT medido só com os ACK das sondas
+        self.assertEqual(a.perda(2), 0.0)
+
+    async def test_sonda_nao_e_retransmitida(self):
+        a, b = await self.par(perda=1.0, sondas=0, idle_timeout=10)
+        a.send(2, Tipo.HELLO, {"sonda": 1}, sonda=True)
+        self.assertFalse(a._pendentes)  # não fica à espera de ACK para reenviar
 
     async def test_com_trafego_continua_a_medir_rtt(self):
-        a, b = await self.par(keepalive=0.05)
+        a, b = await self.par(sondas=0.05)
         self.assertIsNone(a.rtt_min(2))
-        for _ in range(40):  # sem pausas maiores do que o keepalive
+        for _ in range(40):
             a.send(2, Tipo.DATA, b"frame", fluxo=(1, 0))
             await asyncio.sleep(0.01)
         self.assertGreaterEqual(len(a._amostras_rtt[2]), 5)
@@ -97,13 +122,31 @@ class TestTransporte(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(a.perda(2), 0.0)
 
     async def test_perda_aproxima_se_da_simulada(self):
-        a, b = await self.par(perda=0.3, keepalive=0.02, idle_timeout=10)
+        a, b = await self.par(perda=0.3, sondas=0.02, idle_timeout=10)
         b.perda_simulada = 0.0  # só se perde o que o 1 envia (30% no sentido 1 -> 2)
-        with patch.object(ott_transporte, "ESPERA_ACK_KEEPALIVE", 0.2):
+        with patch.object(ott_transporte, "ESPERA_ACK_SONDA", 0.2):
             await asyncio.sleep(1.5)
-            self.assertEqual(len(a._vizinhos[2].keepalives), ott_transporte.AMOSTRAS_PERDA)
-            self.assertAlmostEqual(a.perda(2), 0.3, delta=0.2)  # perdem-se os KEEPALIVE do 1
+            self.assertEqual(len(a._vizinhos[2].sondas), ott_transporte.AMOSTRAS_PERDA)
+            self.assertAlmostEqual(a.perda(2), 0.3, delta=0.2)  # perdem-se as sondas do 1
             self.assertAlmostEqual(b.perda(1), 0.3, delta=0.2)  # perdem-se os ACK do 1 (ida e volta)
+
+    async def test_limite_segue_o_intervalo_anunciado_e_o_rto(self):
+        a, b = await self.par(sondas=0, idle_timeout=None)
+        a.set_intervalo(2, 2.0)
+        self.assertAlmostEqual(a.limite(2), 6.0)  # 3 intervalos, como no BFD
+        a.set_intervalo(2, 0.1)
+        self.assertAlmostEqual(a.limite(2), 0.3)  # RTO ainda é o inicial (0.05): manda o intervalo
+        a._rtt[2] = [0.5, 0.1]  # ligação lenta: RTO = 0.5 + 4 x 0.1 = 0.9
+        self.assertAlmostEqual(a.limite(2), 3 * 0.9)  # nunca abaixo de 3 x RTO (regra do QUIC)
+
+    async def test_vizinho_morto_detetado_pelo_intervalo_anunciado(self):
+        a, b = await self.par(sondas=0.05, idle_timeout=None)
+        a.set_intervalo(2, 0.1)  # limite = 3 x max(0.1, RTO de 0.05 a 0.2 s)
+        await asyncio.sleep(0.3)
+        self.assertEqual(self.down[1], [])
+        b.close()
+        await asyncio.sleep(1.0)
+        self.assertEqual(self.down[1], [2])
 
     async def test_deteta_vizinho_morto(self):
         a, b = await self.par()

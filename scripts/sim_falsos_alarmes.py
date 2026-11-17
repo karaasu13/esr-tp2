@@ -1,4 +1,9 @@
-"""Quantas vezes o idle timeout dá como morto um vizinho que está vivo, com perda?
+"""NOTA (17/11): é a simulação que justificou o KEEPALIVE de 0,5 s, que já não existe (o HELLO
+periódico substituiu-o). Corre com o transporte dessa altura:
+    git show 916d7aa:ott/transporte.py > /tmp/transporte_antigo.py
+e está aqui só como evidência dessa decisão.
+
+Quantas vezes o idle timeout dá como morto um vizinho que está vivo, com perda?
 
 Corre muitos pares de nós (o transporte real, em localhost) com perda simulada nos dois
 sentidos e conta os falsos "vizinho em baixo". O tempo é acelerado: todos os

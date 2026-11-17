@@ -33,7 +33,7 @@ R_PING = re.compile(r"^PING (\d+) do vídeo \((\d+), (\d+)\): (.*)$")
 R_BAIXO = re.compile(r"^\[\d+\] vizinho (\d+) em baixo \((.*)\)$")
 R_SAIU = re.compile(r"^\[\d+\] vizinho (\d+) avisou que vai sair$")
 R_VOLTOU = re.compile(r"^\[\d+\] vizinho (\d+) (?:voltou|ativo)$")
-R_REINICIO = re.compile(r"^\[\d+\] HELLO repetido de (\d+);")
+R_REINICIO = re.compile(r"^\[\d+\] (?:HELLO repetido de (\d+);|vizinho (\d+) reiniciou)")
 R_PLAYER_RESUMO = re.compile(r"^player: (?:a sair: )?frame \d+ · recebidos \d+ de \d+ · (em falta .*)$")
 R_PLAYER_PARAGEM = re.compile(r"^player: (\d+) ms sem frame novo \((.*)\)$")
 R_NOSH = re.compile(r"^no\.sh: (.*)$")
@@ -174,7 +174,7 @@ def analisar(cenario: str):
                     acontecimentos.append((r.hora, f"{nm(outro)} voltou", ("voltou", outro), nome))
                 ativos_para.add((no.id, outro))
             elif (m := R_REINICIO.match(t)):
-                outro = m.group(1)
+                outro = m.group(1) or m.group(2)
                 relatos.setdefault(outro, []).append((r.hora, "cima"))
                 acontecimentos.append((r.hora, f"{nm(outro)} reiniciou", ("reiniciou", outro), nome))
             elif (m := R_NOSH.match(t)):
