@@ -5,6 +5,7 @@ import argparse
 import asyncio
 import ipaddress
 import logging
+import os
 from dataclasses import dataclass, field
 import time
 from typing import Sequence
@@ -640,9 +641,11 @@ def main() -> None:
     except ValueError as exc:
         parser.error(str(exc))
 
+    # OTT_NOME (posto pelos scripts do CORE) põe o nome do nó em cada linha do log.
+    nome = os.environ.get("OTT_NOME", "").replace("%", "").strip()
     logging.basicConfig(
         level=logging.INFO,
-        format="%(asctime)s.%(msecs)03d %(levelname)s %(message)s",
+        format="%(asctime)s.%(msecs)03d " + (f"{nome} " if nome else "") + "%(levelname)s %(message)s",
         datefmt="%H:%M:%S",
     )
     try:
