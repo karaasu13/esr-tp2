@@ -18,7 +18,7 @@ logs/
 # Sistema
 .DS_Store
 
-# Vídeos: só os de teste entram no repositório (o do ProgEx e o 2.º, de cores invertidas)
+# Vídeos: só os de teste entram no repositório (o do ProgEx e o 2.º, um clip da Pexels)
 *.Mjpeg
 !videos/movie.Mjpeg
 !videos/movie2.Mjpeg

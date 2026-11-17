@@ -71,8 +71,8 @@ python3 -m ott <ip-do-bootstrapper> --player          # nó do cliente: entrega 
 python3 player/Cliente.py                             # player
 ```
 
-Para um 2.º vídeo que se distinga à vista, há o `videos/movie2.Mjpeg` (o mesmo com as cores
-invertidas): `python3 player/Servidor.py videos/movie2.Mjpeg 127.0.0.1 24001`.
+Para um 2.º vídeo que se distinga à vista, há o `videos/movie2.Mjpeg` (um clip de 5 s da Pexels,
+102 frames de 384×216, que recomeça no fim): `python3 player/Servidor.py videos/movie2.Mjpeg 127.0.0.1 24001`.
 
 O pedido local de vídeo faz-se com `--ver`:
 
