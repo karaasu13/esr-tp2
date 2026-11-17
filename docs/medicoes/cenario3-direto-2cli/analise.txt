@@ -1,0 +1,14 @@
+== logs/medicoes/cenario3-direto-2cli/C1.csv
+   frames: 1313 recebidos de 1313 · perdidos 0 (0.00 %) · repetidos 0 · fora de ordem 0
+   atraso (ms): médio 2.39 · mediana 2.22 · p95 4.59 · máx 9.38
+   jitter (RFC 3550): 0.72 ms
+   débito: 1262 kbit/s · 18.7 frames/s durante 70.2 s
+   1.º frame: 2.25 s depois de o medidor arrancar
+   cortes: nenhum
+== logs/medicoes/cenario3-direto-2cli/C2.csv
+   frames: 1240 recebidos de 1240 · perdidos 0 (0.00 %) · repetidos 0 · fora de ordem 0
+   atraso (ms): médio 2.47 · mediana 2.27 · p95 4.62 · máx 13.31
+   jitter (RFC 3550): 0.71 ms
+   débito: 1251 kbit/s · 18.7 frames/s durante 66.3 s
+   1.º frame: 2.04 s depois de o medidor arrancar
+   cortes: nenhum

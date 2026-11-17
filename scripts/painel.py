@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 LOGS = Path(__file__).resolve().parent.parent / "logs"
-SUFIXOS = {"player", "bootstrapper"}  # e "video", "video0", "video1", ...
+SUFIXOS = {"player", "bootstrapper", "medidor", "debito"}  # e "video", "video0", "video1", ...
 ATUALIZAR_S = 2
 N_ACONTECIMENTOS = 16
 JUNTAR_S = 2.0  # avisos iguais de vizinhos diferentes, com menos do que isto, ficam numa linha

@@ -6,7 +6,7 @@ LOGS="$PROJ/logs"
 
 # Comandos dos nossos programas, tal como aparecem na lista de processos.
 PADRAO_OTT='^python3 -m ott( |$)'
-PADRAO_TODOS='^python3 (-m (ott|bootstrapper)|player/(Servidor|Cliente)\.py)( |$)'
+PADRAO_TODOS='^python3 (-m (ott|bootstrapper)|player/(Servidor|Cliente|Medidor)\.py|scripts/debito_interface\.py)( |$)'
 
 exigir_root() {
   [ "$(id -u)" -eq 0 ] || { echo "Corre com sudo (os nós do CORE só aceitam comandos do root)." >&2; exit 1; }
@@ -48,6 +48,8 @@ papel() {
   case "${2:-}" in
     bootstrapper) echo "bootstrapper"; return ;;
     player) echo "player"; return ;;
+    medidor) echo "medidor"; return ;;
+    debito) echo "débito da eth0"; return ;;
     video*) echo "servidor de vídeo${2#video}"; return ;;
   esac
   case "$1" in

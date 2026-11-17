@@ -1,0 +1,14 @@
+== logs/medicoes/cenario3-overlay-2cli/C1.csv
+   frames: 1245 recebidos de 1245 · perdidos 0 (0.00 %) · repetidos 0 · fora de ordem 0
+   atraso (ms): médio 5.16 · mediana 4.85 · p95 7.88 · máx 23.30
+   jitter (RFC 3550): 1.17 ms
+   débito: 1324 kbit/s · 18.9 frames/s durante 65.9 s
+   1.º frame: 6.67 s depois de o medidor arrancar
+   cortes: nenhum
+== logs/medicoes/cenario3-overlay-2cli/C2.csv
+   frames: 1171 recebidos de 1171 · perdidos 0 (0.00 %) · repetidos 0 · fora de ordem 0
+   atraso (ms): médio 7.14 · mediana 6.78 · p95 10.45 · máx 28.46
+   jitter (RFC 3550): 1.32 ms
+   débito: 1321 kbit/s · 18.9 frames/s durante 62.0 s
+   1.º frame: 6.35 s depois de o medidor arrancar
+   cortes: nenhum
