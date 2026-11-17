@@ -14,6 +14,27 @@ def avanco_seq(novo, ultimo):
 	return dif if dif < SEQ_MOD // 2 else dif - SEQ_MOD
 
 
+TS_MOD = 1 << 32  # o campo timestamp do RTP tem 32 bits
+
+
+def hora_ms():
+	"""Hora atual em milissegundos, cortada a 32 bits (dá a volta a cada 49,7 dias).
+
+	Vai no campo timestamp do RTP como hora de envio do frame, para o cliente medir o atraso.
+	No CORE todos os nós partilham o relógio do PC, por isso a diferença é o atraso real.
+	"""
+	return int(time() * 1000) % TS_MOD
+
+
+def diferenca_ms(chegada_ms, envio_ms):
+	"""Atraso em ms entre a hora de envio (32 bits, de hora_ms) e a hora de chegada (sem corte).
+
+	Tem em conta a volta aos 32 bits; um valor negativo quer dizer relógios desacertados.
+	"""
+	dif = (chegada_ms - envio_ms) % TS_MOD
+	return dif if dif < TS_MOD // 2 else dif - TS_MOD
+
+
 class RtpPacket:	
 	header = bytearray(HEADER_SIZE)
 	
@@ -22,7 +43,7 @@ class RtpPacket:
 		
 	def encode(self, version, padding, extension, cc, seqnum, marker, pt, ssrc, payload):
 		"""Encode the RTP packet with header fields and payload."""
-		timestamp = int(time())
+		timestamp = hora_ms() # hora de envio em ms (no original: segundos), para medir o atraso
 		header = bytearray(HEADER_SIZE) 
 		header[0] = (header[0] | version << 6) & 0xC0; # 2 bits
 		header[0] = (header[0] | padding << 5); # 1 bit

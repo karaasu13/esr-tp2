@@ -127,3 +127,56 @@ sudo -E bash scripts/arrancar_cenario.sh 3     # cenário 3 (topologias/underlay
 O script espera que os routers já encaminhem, arranca o bootstrapper, os nós, os players e por fim o servidor, e abre uma janela por programa com o nome do nó no título. Cada janela grava também em `logs/cenarioN-<nó>.log`. Para parar tudo, o Stop do CORE.
 
 No cenário 3, o bootstrapper corre no PC do N4 (10.0.21.20) na porta 5001, para não chocar com o nó do N4 na porta 5000.
+
+## 4. Medições no cliente e comparação sem overlay
+
+O `Servidor.py` põe no timestamp RTP a hora de envio de cada frame, em milissegundos. No CORE
+todos os nós partilham o relógio do PC, por isso a hora de chegada menos a hora de envio é o atraso
+de ponta a ponta. Em localhost dá perto de 0, por isso os números para o relatório vêm do CORE.
+
+Três programas:
+
+| Programa | Onde corre | O que faz |
+|---|---|---|
+| `player/Medidor.py <csv>` | cliente, no lugar do player (porta 25000) | grava uma linha por frame: chegada, nº, envio, atraso, tamanho |
+| `scripts/analisar_medicoes.py <csv>…` | em qualquer lado, depois | perda, atraso (médio, mediana, p95, máx.), jitter (RFC 3550), débito, 1.º frame e cortes |
+| `scripts/debito_interface.py eth0` | servidor | kbit/s e pacotes/s que saem e entram na interface, a cada segundo e em média |
+
+O medidor e o player usam a mesma porta: num cliente corre um ou outro. O CSV é escrito linha a
+linha, por isso pode ficar em `logs/` e parar-se com Ctrl+C ou com o Stop do CORE.
+
+### Com overlay (cenário 2)
+
+Arrancar o cenário como na secção 3 ou à mão, mas nos clientes trocar o player pelo medidor:
+
+```bash
+C1:  python3 player/Medidor.py logs/C1-overlay.csv --duracao 60
+C1:  python3 -m ott 10.0.6.1 --player --ver 1:0
+S1:  python3 scripts/debito_interface.py eth0 --duracao 60
+```
+
+### Sem overlay
+
+Nenhum nó OTT: o S1 corre um `Servidor.py` por cliente, a enviar direto para o IP do cliente.
+
+```bash
+C1:  python3 player/Medidor.py logs/C1-direto.csv --ip 0.0.0.0 --duracao 60
+C2:  python3 player/Medidor.py logs/C2-direto.csv --ip 0.0.0.0 --duracao 60
+S1:  python3 player/Servidor.py videos/movie.Mjpeg 10.0.4.20 25000     # para o C1
+S1:  python3 player/Servidor.py videos/movie.Mjpeg 10.0.5.20 25000     # para o C2
+S1:  python3 scripts/debito_interface.py eth0 --duracao 60
+```
+
+### Análise
+
+```bash
+python3 scripts/analisar_medicoes.py logs/C1-overlay.csv logs/C1-direto.csv
+```
+
+Testes a fazer, cada um com o print da análise e o do `debito_interface.py` no S1:
+
+| Teste | O que se espera |
+|---|---|
+| 1, 2 e 3 clientes, com e sem overlay | Sem overlay, o tráfego à saída do S1 cresce com os clientes. Com overlay, sai uma só cópia por vídeo |
+| Perda ou atraso numa ligação (`tc`, secção 1) | A perda e o atraso no cliente sobem; com a troca de pai, voltam a descer |
+| Cortar a ligação do pai (secção 2) | Um corte na análise (`aos X s: Y ms sem vídeo`): Y é o tempo de recuperação |

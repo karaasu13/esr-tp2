@@ -1,0 +1,3 @@
+# Os scripts correm no Linux (CORE): fins de linha sempre LF, mesmo num checkout no Windows
+# (com CRLF o bash falha, ex: "set: pipefail: invalid option name").
+*.sh text eol=lf
