@@ -31,8 +31,8 @@ class Tipo(IntEnum):
     REGISTER = 0x01
     REGISTER_ACK = 0x02
     HELLO = 0x03
-    HELLO_ACK = 0x04
-    KEEPALIVE = 0x05
+    HELLO_ACK = 0x04  # já não se usa: o HELLO é periódico (reservado)
+    KEEPALIVE = 0x05  # já não se usa: o HELLO faz de sinal de vida (reservado)
     ACK = 0x06
     CLOSE = 0x07
     # 0x10–0x1F: mensagens de gestão de fluxos e rotas

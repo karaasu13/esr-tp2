@@ -55,9 +55,9 @@ python3 -m ott <ip-do-bootstrapper>                         # nó OTT
 ```
 
 O bootstrapper identifica cada nó pelo IP de origem do `REGISTER` e responde com o ID e os
-vizinhos definidos em `links`. O nó OTT regista-se, faz o handshake `HELLO`/`HELLO_ACK` e
-mantém a tabela de vizinhos atualizada, removendo vizinhos que caem e readmitindo-os quando
-voltam a comunicar.
+vizinhos definidos em `links`. O nó OTT regista-se e manda um `HELLO` periódico a cada
+vizinho (apresentação, sinal de vida e nova tentativa de ligação, como no OSPF e no BFD),
+removendo vizinhos que se calam e readmitindo-os quando voltam a ouvir-se.
 
 No cenário 2, se o bootstrapper estiver no n7, usa um IP alcançável desse router, por exemplo
 `python3 -m ott 10.0.1.1` no N1.

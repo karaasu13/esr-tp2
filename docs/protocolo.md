@@ -3,7 +3,7 @@
 Protocolo próprio sobre UDP, inspirado no QUIC (decisões D2, D3 e D6 no doc "TP2 ESR — Plano e decisões").
 Cada nó usa **um só socket UDP**, na porta **5000**, para todos os vizinhos e para o bootstrapper.
 Código: `ott/protocolo.py` (formato) e `ott/transporte.py` (comportamento).
-Os termos técnicos (ACK, RTT, RTO, keepalive…) estão explicados no **Glossário**, no fim.
+Os termos técnicos (ACK, RTT, RTO, sinal de vida…) estão explicados no **Glossário**, no fim.
 
 ## Formato do pacote
 
@@ -44,9 +44,9 @@ Cabeçalho fixo de **14 bytes**, ordem de rede (`struct "!BBBHHIHB"`).
 |---|---|---|---|---|
 | 0x01 | REGISTER | sim | `{}` | Inês |
 | 0x02 | REGISTER_ACK | sim | `{"id": 3, "vizinhos": [{"id": 2, "ip": "10.0.0.1"}, …]}` | bootstrapper |
-| 0x03 | HELLO | sim | `{}` | handshake de vizinhos |
-| 0x04 | HELLO_ACK | sim | `{}` | handshake de vizinhos |
-| 0x05 | KEEPALIVE | pede ACK, não é retransmitido | vazio | transporte |
+| 0x03 | HELLO | pede ACK, não é retransmitido (periódico) | `{"arranque": 2937415, "intervalo": 1.0, "ouvidos": [2, 5]}` | vizinhos |
+| 0x04 | HELLO_ACK | — | já não se usa (reservado) | — |
+| 0x05 | KEEPALIVE | — | já não se usa (reservado): o HELLO faz o seu papel | — |
 | 0x06 | ACK | não | pn confirmado, 4 B binário | transporte |
 | 0x07 | CLOSE | sim | `{}` | nó vizinho |
 | 0x10 | ANNOUNCE | não | `{"srv": 1, "ronda": 1731600000, "videos": [0], "rtt": 2.0, "jitter": 0.1, "perda": 0.0, "saltos": 1}` | escolha de caminhos |
@@ -56,17 +56,43 @@ Cabeçalho fixo de **14 bytes**, ordem de rede (`struct "!BBBHHIHB"`).
 | 0x14 | PING | não | número e caminho acumulado | teste do caminho |
 | 0x20 | DATA | não | bytes do vídeo | streaming |
 
-## Saída e recuperação de vizinhos
+## Vizinhos: o HELLO periódico
 
-No encerramento gracioso, o nó envia `CLOSE` fiável aos vizinhos e aguarda os ACKs até
-1 segundo. O recetor remove imediatamente o vizinho e o estado de fluxos associado; se o
-aviso se perder, continua a valer o idle timeout normal.
+Uma só mensagem, o `HELLO`, faz de apresentação, de sinal de vida e de nova tentativa de
+ligação, como o Hello do OSPF (RFC 2328) e os pacotes de controlo do BFD (RFC 5880). Cada nó
+manda-o a cada vizinho configurado, a um ritmo que depende do estado desse vizinho:
 
-Quando o transporte declara um vizinho em baixo, o nó tenta restabelecer o contacto com
-`HELLO` após 5, 10, 20, 40 e 60 segundos, repetindo depois de 60 em 60 segundos. Não há
-tentativas periódicas no arranque: nessa altura cada nó apresenta-se por iniciativa própria.
-Um `HELLO` novo de um vizinho já confirmado limpa o estado anterior desse vizinho, tratando-o
-como um reinício rápido.
+| Estado do vizinho | O que quer dizer | Intervalo entre HELLOs |
+|---|---|---|
+| a arrancar | ainda não se ouviu nenhum HELLO dele | 1 s nos 3 primeiros, depois 5 s |
+| a ouvir | ouvem-se os HELLOs dele, mas ele ainda não nos ouve (o Init do OSPF) | 1 s nos 3 primeiros, depois 5 s |
+| vivo | ouvem-se os dois: o HELLO dele traz-nos em `ouvidos` | 1 s |
+| em baixo | estava vivo e calou-se (ou deixou de nos ouvir) | 1 s nos 3 primeiros, depois 5 s |
+| saiu | avisou com `CLOSE` | não se envia: é ele que se apresenta quando voltar |
+
+O corpo do HELLO:
+
+- `arranque`: número sorteado quando o nó arranca. Se mudar, o vizinho reiniciou: o estado
+  antigo dele (fluxos e anúncios) é limpo, mesmo que não tenha chegado a ser dado como em baixo.
+- `intervalo`: de quanto em quanto tempo esse nó manda HELLOs a um vizinho vivo (1 s). Quem o
+  recebe dá-o como em baixo ao fim de 3 intervalos sem ouvir nada dele (ver "Vizinhos vivos").
+- `ouvidos`: os vizinhos de quem esse nó está a ouvir HELLOs. Um vizinho só passa a vivo
+  quando os dois se ouvem, e um vizinho vivo que deixa de nos pôr em `ouvidos` volta a "a ouvir".
+  Assim, uma ligação que só funciona num sentido fica em baixo, em vez de ligar e desligar.
+
+O HELLO pede ACK mas não é retransmitido: o seguinte faz esse papel. Os ACK dão as medidas da
+ligação (RTT, jitter e perda). Logo que um vizinho muda de estado, o nó responde de imediato,
+sem esperar pelo intervalo, para a ligação se formar em pouco mais do que um RTT.
+
+**Porque continua a haver HELLOs para quem está em baixo:** se a rede entre dois nós vivos
+falhar e voltar, nenhum dos dois reinicia, por isso nenhum se apresentaria. Com os HELLOs a
+5 s, voltam a ouvir-se no máximo 5 s depois. É o que o BFD faz quando a sessão não está ativa.
+Os 3 primeiros a 1 s seguem a ideia de desistir ao fim de cerca de 3 HELLOs, mas o nó abranda
+em vez de parar.
+
+No encerramento gracioso, o nó envia `CLOSE` fiável aos vizinhos vivos e aguarda os ACKs até
+1 segundo. O recetor remove imediatamente o vizinho e o estado de fluxos associado, e deixa de
+lhe mandar HELLOs; se o aviso se perder, o vizinho é dado como em baixo pelo silêncio.
 
 ## Gestão e encaminhamento de fluxos
 
@@ -170,13 +196,13 @@ inteiro (a soma das ligações).
 - Para quem **não é vizinho** (ex: o bootstrapper), desiste-se ao fim de **5 tentativas**.
 - O RTT é atualizado com médias móveis exponenciais (`srtt ← 7/8·srtt + 1/8·amostra`), como no TCP e no QUIC.
 
-## Vizinhos vivos (keepalive e idle timeout)
+## Vizinhos vivos (limite de silêncio)
 
-- Cada nó envia um `KEEPALIVE` a cada vizinho de **0,5 em 0,5 s**, haja ou não tráfego. Com vídeo a passar continua a haver medições.
-- O KEEPALIVE pede ACK, para medir o RTT e a perda, mas não é retransmitido: o seguinte faz esse papel.
-- Medidas por vizinho, usadas no custo das rotas: `rtt_min` (mínimo das últimas 10 amostras de RTT), `jitter` (o `rttvar` do RFC 6298) e `perda` (fração dos últimos 20 KEEPALIVE sem ACK em 1 s; mede a ida e a volta juntas).
+- Se não chega **nada** de um vizinho (HELLO, ACK, vídeo…) durante o **limite de silêncio**, o vizinho é dado como em baixo, as mensagens pendentes para ele são canceladas e é chamado `on_neighbor_down(id)`.
+- Limite de silêncio = **3 × o intervalo que o vizinho anunciou no HELLO**, e nunca menos do que **3 × o RTO** para ele. Com o HELLO a 1 s, dá 3 s. Os tempos ficam combinados entre cada par de vizinhos, como no BFD (multiplicador 3, o valor habitual), e numa ligação lenta o limite estica sozinho, como a regra do QUIC para o idle timeout (RFC 9000).
+- Com vídeo a passar, a falha deteta-se mais depressa pela falta de vídeo: 300 ms sem DATA do pai levam o nó a trocar de pai (ver "Escolha de caminhos").
+- Medidas por vizinho, usadas no custo das rotas, tiradas dos ACK dos HELLOs: `rtt_min` (mínimo das últimas 10 amostras de RTT), `jitter` (o `rttvar` do RFC 6298) e `perda` (fração dos últimos 20 HELLOs sem ACK em 1 s; mede a ida e a volta juntas).
 - Quando um vizinho é dado como em baixo, a memória de duplicados dele é apagada: se voltar, é uma ligação nova.
-- Se não chega **nada** de um vizinho durante **3,5 s** (cerca de 7 oportunidades de dar sinal), o vizinho é dado como em baixo, as mensagens pendentes para ele são canceladas e é chamado `on_neighbor_down(id)`.
 
 ## Interface do módulo (`ott/transporte.py`)
 
@@ -186,8 +212,10 @@ await t.start()                      # 0.0.0.0:5000
 t.set_address(0, (ip_boot, 5000))    # conhecer o bootstrapper (não é vizinho)
 t.send(0, Tipo.REGISTER, {}, fiavel=True)
 t.set_id(3)                          # depois do REGISTER_ACK
-t.add_neighbor(2, ("10.0.0.1", 5000))  # passa a ter keepalive e idle timeout
-t.send(2, Tipo.HELLO, {...}, fiavel=True)
+t.add_neighbor(2, ("10.0.0.1", 5000))  # passa a ter limite de silêncio e medidas
+t.set_intervalo(2, 1.0)              # intervalo de HELLO que o vizinho anunciou
+t.send(2, Tipo.HELLO, {...}, sonda=True)  # pede ACK, sem retransmissão
+t.send(2, Tipo.JOIN, fluxo=(1, 0), fiavel=True)
 t.send(5, Tipo.DATA, rtp_bytes, fluxo=(1, 0))  # vídeo, sem fiabilidade
 t.rtt(2)                             # RTT suavizado em segundos (ou None)
 t.rtt_min(2) / t.jitter(2)           # segundos (ou None)
@@ -211,8 +239,9 @@ Um IP não configurado ou uma mensagem `REGISTER` inválida é registado no log 
 | Parâmetro | Valor | Porquê |
 |---|---|---|
 | Porta | 5000 | Igual em todos os nós: no CORE cada nó tem o seu namespace |
-| Keepalive | 0,5 s | Com 1 s, uma simulação deu cerca de 1,5 falsos "em baixo" por hora com 20% de perda; com 0,5 s, nenhum em 10 h. Custa cerca de 1,5 kbit/s por vizinho num link parado (`scripts/sim_falsos_alarmes.py`) |
-| Idle timeout | 3,5 s | Deteta uma falha em 3,5 a 3,75 s (medido no CORE) e cabem lá cerca de 7 keepalives |
+| HELLO a um vizinho vivo | 1 s | BFD: intervalo combinado entre vizinhos. A deteção rápida, com vídeo a passar, é a falta de vídeo (0,3 s); o HELLO só tem de apanhar o resto |
+| HELLO a quem não responde | 1 s nos 3 primeiros, depois 5 s | BFD: com a sessão em baixo continua a enviar, mais devagar. Uma ligação que volta é retomada em 5 s, no máximo |
+| Limite de silêncio | 3 × intervalo anunciado (3 s), nunca abaixo de 3 × RTO | BFD (multiplicador 3) e a regra do QUIC para o idle timeout |
 | RTO inicial / mín. / máx. | 0,5 / 0,2 / 2 s | O RTT no CORE é de dezenas de ms |
 | Tentativas (só não vizinhos) | 5 | Com 20% de perda em cada sentido, a probabilidade de falhar as 5 é ≈ 0,6% (0,36⁵). Para vizinhos não há limite: decide o idle timeout |
 
@@ -243,8 +272,12 @@ Os termos técnicos deste documento, em palavras simples. A explicação de cada
 | **srtt / rttvar** | A média suavizada do RTT / quanto o RTT costuma variar. |
 | **RTO** | Quanto tempo se espera pelo ACK antes de reenviar (*retransmission timeout*). RTO = srtt + 4 × rttvar, nunca menos de 0,2 s nem mais de 2 s. |
 | **Backoff exponencial** | Duplicar a espera a cada tentativa falhada (0,2 → 0,4 → 0,8 s…), para não encher a rede de reenvios. |
-| **Keepalive** | Mensagem pequena só para dizer "estou vivo", enviada quando não há mais nada para enviar. |
-| **Idle timeout** | Tempo sem receber nada de um vizinho ao fim do qual ele é dado como morto (3,5 s). |
+| **Keepalive / sinal de vida** | Mensagem só para dizer "estou vivo". No nosso protocolo é o HELLO periódico. |
+| **Idle timeout / limite de silêncio** | Tempo sem receber nada de um vizinho ao fim do qual ele é dado como em baixo (3 × o intervalo de HELLO que ele anunciou, 3 s). |
+| **Sonda** | Mensagem que pede ACK mas não é reenviada (o HELLO): serve para medir o RTT e a perda. |
+| **Número de arranque** | Número sorteado quando um nó arranca. Se mudar nos HELLOs, o nó reiniciou. |
+| **OSPF** | Protocolo de encaminhamento dos routers; o seu Hello periódico, com a lista dos vizinhos ouvidos, inspirou o nosso HELLO. |
+| **BFD** | Protocolo que os routers usam para detetar depressa que um vizinho deixou de responder: intervalo combinado entre os dois e "em baixo" ao fim de 3 em falta. |
 | **Falso "em baixo"** | Dar como morto um vizinho que está vivo, porque se perderam todos os pacotes dele durante o idle timeout. |
 | **ISN** | O número com que o contador de pacotes começa (*initial sequence number*). É aleatório, para um nó reiniciado não repetir números antigos. |
 | **Fluxo / stream** | Um vídeo de um servidor, identificado pelo par (servidor, nº do vídeo). |
