@@ -14,7 +14,7 @@ reparação), porque é esse código que eles medem.
 |---|---|
 | Data | 17/11, entre as 16:28 e as 16:43 |
 | Código | ramo `pedro/modo-medicao`, commit `8d8a1a6` (o protocolo é o da `main` em `ba0b8c8`) |
-| Topologia | cenário 3 (`topologias/underlay.xml`), no CORE |
+| Topologia | cenário 3 (`topologias/cenario3.xml`), no CORE |
 | Servidor | só o S1, com o vídeo 0 (`videos/movie.Mjpeg`); o S2 não arrancou |
 | Clientes | C1; C1 e C2; C1, C2 e C3 |
 | Duração | 60 s de medição no S1, depois de todos os clientes arrancarem |

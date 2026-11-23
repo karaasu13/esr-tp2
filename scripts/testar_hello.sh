@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Os 4 testes do HELLO único no CORE (cenário 3), seguidos e sem intervenção.
 #
-# Uso, com o topologias/underlay.xml aberto no CORE e depois de carregar em Start:
+# Uso, com o topologias/cenario3.xml aberto no CORE e depois de carregar em Start:
 #   xhost +SI:localuser:root
 #   sudo -E bash scripts/testar_hello.sh
 #

@@ -3,8 +3,8 @@
 #
 # Uso (na máquina, fora do CORE, depois de abrir a topologia e carregar em Start):
 #   xhost +SI:localuser:root                        # uma vez por sessão gráfica
-#   sudo -E bash scripts/arrancar_cenario.sh 3      # cenário 3 (topologias/underlay.xml)
-#   sudo -E bash scripts/arrancar_cenario.sh 2      # cenário 2 (topologias/testte2.xml)
+#   sudo -E bash scripts/arrancar_cenario.sh 3      # cenário 3 (topologias/cenario3.xml)
+#   sudo -E bash scripts/arrancar_cenario.sh 2      # cenário 2 (topologias/cenario2.xml)
 #   sudo -E bash scripts/arrancar_cenario.sh 3 --janelas   # uma janela por programa, como antes
 #
 # Os programas correm sem janela e o que escrevem fica em logs/cenarioN-<nó>[-<programa>].log,
