@@ -1,6 +1,6 @@
 """Escolha de caminhos: anúncios dos servidores e pai de cada servidor.
 
-Secção 14 de docs/desenho-rotas-e-video.md:
+Especificação em docs/protocolo.md, secção "Anúncios e escolha do pai":
   * o nó com servidor local envia ANNOUNCE a todos os vizinhos de ~2 em 2 s;
   * cada nó guarda o último anúncio de cada vizinho, por servidor, já somadas as medidas da
     ligação (RTT mínimo, jitter, perda e 1 salto), e fica com o vizinho mais barato como pai;

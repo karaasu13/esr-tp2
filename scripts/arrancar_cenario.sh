@@ -13,7 +13,7 @@
 # Para mexer num nó (parar, matar, piorar ou cortar uma ligação): scripts/no.sh.
 # Para parar tudo: sudo bash scripts/no.sh parar-tudo, e depois o Stop do CORE.
 #
-# Modo de medição (docs/testes.md, secção 4): em vez dos players, os clientes correm o
+# Modo de medição (docs/testes.md, secção 5): em vez dos players, os clientes correm o
 # player/Medidor.py, o S1 mede o tráfego da eth0, e no fim o script para os medidores e mostra a
 # análise. Tudo fica em logs/medicoes/cenarioN-<modo>-<K>cli/ (C1.csv, ..., S1-debito.log,
 # analise.txt e uma cópia dos logs dos nós). Entre dois testes: no.sh parar-tudo, Stop e Start.

@@ -2,11 +2,12 @@
 
 Medições no cliente para comparar a nossa solução (vídeo pelo overlay) com a solução sem overlay
 (o servidor envia uma cópia diretamente a cada cliente). Como se mede e o que significa cada
-número: `docs/testes.md`, secção 4.
+número: `docs/testes.md`, secção 5.
 
-Faltam os **testes de falhas** (piorar uma ligação com `tc`, cortar a ligação do pai). Ficam para
-depois de fechar a robustez das rotas (custo com as quatro medidas, troca com margem, WITHDRAW e
-reparação), porque é esse código que eles medem.
+Estes números são de 17/11, **antes do HELLO único** (ainda com o KEEPALIVE de 0,5 s): o tráfego
+de controlo mudou, por isso os testes com overlay têm de se repetir na versão final (ver "Quando
+repetir"). Faltam também os **testes de falhas** (piorar uma ligação, cortar a ligação do pai,
+servidor que cai).
 
 ## Condições
 

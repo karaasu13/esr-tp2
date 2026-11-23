@@ -1,9 +1,12 @@
-# Protocolo OTT — transporte (Etapa 1)
+# Protocolo OTT — especificação
 
-Protocolo próprio sobre UDP, inspirado no QUIC (decisões D2, D3 e D6 no doc "TP2 ESR — Plano e decisões").
-Cada nó usa **um só socket UDP**, na porta **5000**, para todos os vizinhos e para o bootstrapper.
-Código: `ott/protocolo.py` (formato) e `ott/transporte.py` (comportamento).
-Os termos técnicos (ACK, RTT, RTO, sinal de vida…) estão explicados no **Glossário**, no fim.
+O protocolo dos nós do overlay: formato dos pacotes, mensagens, vizinhos, rotas, fluxos e fiabilidade.
+É um protocolo próprio sobre UDP, inspirado no QUIC. Cada nó usa **um só socket UDP**, na porta
+**5000**, para todos os vizinhos e para o bootstrapper.
+
+Código: `ott/protocolo.py` (formato), `ott/transporte.py` (fiabilidade, medidas e vizinhos vivos),
+`ott/rotas.py` (anúncios e escolha do pai) e `ott/__main__.py` (registo, HELLO, fluxos e PING).
+De onde vem cada ideia está em "O que seguimos"; os termos técnicos estão no **Glossário**, no fim.
 
 ## Formato do pacote
 
@@ -42,19 +45,19 @@ Cabeçalho fixo de **14 bytes**, ordem de rede (`struct "!BBBHHIHB"`).
 
 | Código | Tipo | Fiável | Corpo | Quem trata |
 |---|---|---|---|---|
-| 0x01 | REGISTER | sim | `{}` | Inês |
-| 0x02 | REGISTER_ACK | sim | `{"id": 3, "vizinhos": [{"id": 2, "ip": "10.0.0.1"}, …]}` | bootstrapper |
+| 0x01 | REGISTER | sim | `{}` | bootstrapper |
+| 0x02 | REGISTER_ACK | sim | `{"id": 3, "vizinhos": [{"id": 2, "ip": "10.0.0.1"}, …]}` | nó (registo) |
 | 0x03 | HELLO | pede ACK, não é retransmitido (periódico) | `{"arranque": 2937415, "intervalo": 1.0, "ouvidos": [2, 5]}` | vizinhos |
-| 0x04 | HELLO_ACK | — | já não se usa (reservado) | — |
-| 0x05 | KEEPALIVE | — | já não se usa (reservado): o HELLO faz o seu papel | — |
 | 0x06 | ACK | não | pn confirmado, 4 B binário | transporte |
 | 0x07 | CLOSE | sim | `{}` | nó vizinho |
 | 0x10 | ANNOUNCE | não | `{"srv": 1, "ronda": 1731600000, "videos": [0], "rtt": 2.0, "jitter": 0.1, "perda": 0.0, "saltos": 1}` | escolha de caminhos |
 | 0x11 | JOIN | sim no pedido inicial; não nas renovações | vazio; fluxo no cabeçalho | gestão de fluxos |
 | 0x12 | LEAVE | sim | vazio; fluxo no cabeçalho | gestão de fluxos |
 | 0x13 | WITHDRAW | sim | `{"srv": 1}` | escolha de caminhos |
-| 0x14 | PING | não | número e caminho acumulado | teste do caminho |
+| 0x14 | PING | não | `{"n": 12, "caminho": [{"id": 17, "t": 1731245000.123}, …]}` | teste do caminho |
 | 0x20 | DATA | não | bytes do vídeo | streaming |
+
+Os códigos 0x04 e 0x05 estão livres: eram o HELLO_ACK e o KEEPALIVE, que o HELLO periódico substituiu.
 
 ## Vizinhos: o HELLO periódico
 
@@ -105,7 +108,13 @@ O pai de cada fluxo é o pai escolhido para o servidor desse fluxo (secção seg
 Um nó só aceita `DATA` e `PING` do pai registado para o fluxo. Reencaminha-os para os destinos
 ativos; `DATA` entrega o pacote RTP intacto ao player local. O servidor envia um `PING` por
 fluxo ativo a cada 5 segundos. Cada nó acrescenta o seu ID e hora ao caminho e regista-o no
-log. O formato de `DATA` continua a ser o pacote RTP sem a hora extra que consta da proposta.
+log, com o tempo de cada salto (ex: `PING 12 do vídeo (17, 0): 17 → 1 (+0.6 ms) → 14 (+0.5 ms)`).
+O PING serve só para testes: nenhum nó o usa para escolher rotas.
+
+O corpo do `DATA` é o pacote RTP tal como o `Servidor.py` o envia. O campo *timestamp* do RTP leva
+a hora de envio em milissegundos (no código do professor eram segundos), para o cliente medir o
+atraso. No CORE todos os nós partilham o relógio do computador, por isso a medida é fiável; numa
+rede real não seria.
 
 ## Anúncios e escolha do pai (`ott/rotas.py`)
 
@@ -189,7 +198,7 @@ inteiro (a soma das ligações).
 
 - Um pacote com `FIAVEL` é confirmado com um `ACK` que leva **o pn desse pacote**. O ACK não é fiável e nunca é confirmado.
 - Se não chegar ACK dentro do **RTO**, a mensagem é reenviada com **pn novo** e o **mesmo id da mensagem**.
-  - Como o pn nunca se repete, cada ACK diz exatamente a que envio responde. O RTT medido não é ambíguo, que é o problema que o TCP contorna com o algoritmo de Karn. É isto que permite usar o RTT como métrica na Etapa 2.
+  - Como o pn nunca se repete, cada ACK diz exatamente a que envio responde. O RTT medido não é ambíguo, que é o problema que o TCP contorna com o algoritmo de Karn. É isto que permite usar o RTT no custo das rotas.
   - Como o id da mensagem se mantém, o recetor deteta duplicados quando foi o ACK que se perdeu. Volta a enviar ACK, mas não entrega a mensagem outra vez. **Entrega exatamente uma vez.**
 - RTO = `srtt + 4·rttvar` (RFC 6298), com mínimo de 0,2 s. Antes da 1.ª medição é 0,5 s. Duplica a cada tentativa até um máximo de 2 s.
 - Para um **vizinho**, retransmite-se até haver ACK ou até o idle timeout o dar como em baixo (a mensagem é então cancelada). ACKs perdidos não chegam para dar um vizinho como morto: no CORE, com 20% de perda, isso deu um falso alarme.
@@ -200,7 +209,7 @@ inteiro (a soma das ligações).
 
 - Se não chega **nada** de um vizinho (HELLO, ACK, vídeo…) durante o **limite de silêncio**, o vizinho é dado como em baixo, as mensagens pendentes para ele são canceladas e é chamado `on_neighbor_down(id)`.
 - Limite de silêncio = **3 × o intervalo que o vizinho anunciou no HELLO**, e nunca menos do que **3 × o RTO** para ele. Com o HELLO a 1 s, dá 3 s. Os tempos ficam combinados entre cada par de vizinhos, como no BFD (multiplicador 3, o valor habitual), e numa ligação lenta o limite estica sozinho, como a regra do QUIC para o idle timeout (RFC 9000).
-- Com vídeo a passar, a falha deteta-se mais depressa pela falta de vídeo: 300 ms sem DATA do pai levam o nó a trocar de pai (ver "Escolha de caminhos").
+- Com vídeo a passar, a falha deteta-se mais depressa pela falta de vídeo: 300 ms sem DATA do pai levam o nó a trocar de pai (ver "Anúncios e escolha do pai").
 - Medidas por vizinho, usadas no custo das rotas, tiradas dos ACK dos HELLOs: `rtt_min` (mínimo das últimas 10 amostras de RTT), `jitter` (o `rttvar` do RFC 6298) e `perda` (fração dos últimos 20 HELLOs sem ACK em 1 s; mede a ida e a volta juntas).
 - Quando um vizinho é dado como em baixo, a memória de duplicados dele é apagada: se voltar, é uma ligação nova.
 
@@ -244,15 +253,41 @@ Um IP não configurado ou uma mensagem `REGISTER` inválida é registado no log 
 | Limite de silêncio | 3 × intervalo anunciado (3 s), nunca abaixo de 3 × RTO | BFD (multiplicador 3) e a regra do QUIC para o idle timeout |
 | RTO inicial / mín. / máx. | 0,5 / 0,2 / 2 s | O RTT no CORE é de dezenas de ms |
 | Tentativas (só não vizinhos) | 5 | Com 20% de perda em cada sentido, a probabilidade de falhar as 5 é ≈ 0,6% (0,36⁵). Para vizinhos não há limite: decide o idle timeout |
+| Período dos anúncios | 2 s, ±10% ao acaso | Os dois servidores não anunciam sempre no mesmo instante |
+| Validade de um anúncio | 6 s (3 períodos) | Aguenta a perda de 2 anúncios seguidos |
+| Limite de saltos de um anúncio | 16 | Rede de segurança contra ciclos, como no RIP |
+| Margem para trocar de pai | mais de 15% e mais de 2 unidades | Não andar a saltar entre caminhos parecidos |
+| Renovação do JOIN / validade de um destino | 2 s / 6 s | Como no PIM: o que não é renovado expira sozinho |
+| Falta de vídeo do pai | 300 ms | 6 frames a 20 por segundo |
+| PING | de 5 em 5 s | Só para testes |
+| Portas locais do vídeo | 24000 + k (vídeo k, no servidor), 25000 (player) | Entre o nó e o `Servidor.py` / `Cliente.py`, na mesma máquina |
 
 ## Testar
 
-- `python3 -m unittest -v`: testes em localhost, com perda simulada de 30% e 40%.
-- No CORE (cenário 1, `topologias/teste1.xml`): `bash scripts/demo-cenario1.sh [nome-do-teste]` em cada nó; com nome, grava o log em `logs/`.
+- `python3 -m unittest -v`: testes automáticos em localhost (transporte com perda simulada de 30% e 40%, bootstrapper, rotas, vídeo e medições).
+- No CORE: `sudo -E bash scripts/arrancar_cenario.sh 3` arranca um cenário inteiro, e `sudo -E bash scripts/testar_hello.sh` corre os 4 testes do HELLO. Tudo explicado em [`testes.md`](testes.md).
+
+## O que seguimos
+
+O professor pediu que disséssemos o que seguimos, em vez de justificar os valores só com testes nossos.
+
+| No nosso protocolo | De onde vem a ideia |
+|---|---|
+| Um só socket UDP e fiabilidade feita pelo programa, só para o controlo | QUIC (RFC 9000) |
+| Nº de pacote nunca reutilizado, nem nos reenvios; id da mensagem à parte, para detetar duplicados | QUIC (RFC 9000): *packet number* e *stream offset* |
+| RTO calculado a partir do RTT (`srtt + 4·rttvar`), com backoff | TCP (RFC 6298) |
+| Limite de silêncio nunca abaixo de 3 × o tempo de reenvio | Regra do QUIC para o *idle timeout* (RFC 9000) |
+| Uma só mensagem para descobrir e vigiar os vizinhos, com a lista dos vizinhos ouvidos e o estado "a ouvir" | Hello do OSPF (RFC 2328) |
+| Intervalo do HELLO dito no próprio pacote, em baixo ao fim de 3 intervalos, envio mais lento com a sessão em baixo | BFD (RFC 5880) |
+| Anúncios com número de ronda e custo somado em cada salto | Vetor de distâncias com nº de sequência: DSDV e Babel (RFC 8966) |
+| Nunca escolher como pai quem recebe através de nós (vizinho viável) | Condição de viabilidade do Babel e do EIGRP |
+| Anúncios passados a todos os vizinhos, apagados se não forem renovados | Inundação do OSPF (RFC 2328): nº de sequência e idade máxima |
+| JOIN salto a salto na direção do servidor, renovado periodicamente | Multicast nos routers: PIM (RFC 7761) |
+| Um overlay que reage a falhas mais depressa do que a rede por baixo | *Resilient Overlay Networks* (Andersen e outros, 2001) |
 
 ## Glossário
 
-Os termos técnicos deste documento, em palavras simples. A explicação de cada escolha está no doc "TP2 ESR — Protocolo QUIC-like".
+Os termos técnicos deste documento, em palavras simples.
 
 | Termo | O que quer dizer |
 | --- | --- |
@@ -272,7 +307,7 @@ Os termos técnicos deste documento, em palavras simples. A explicação de cada
 | **srtt / rttvar** | A média suavizada do RTT / quanto o RTT costuma variar. |
 | **RTO** | Quanto tempo se espera pelo ACK antes de reenviar (*retransmission timeout*). RTO = srtt + 4 × rttvar, nunca menos de 0,2 s nem mais de 2 s. |
 | **Backoff exponencial** | Duplicar a espera a cada tentativa falhada (0,2 → 0,4 → 0,8 s…), para não encher a rede de reenvios. |
-| **Keepalive / sinal de vida** | Mensagem só para dizer "estou vivo". No nosso protocolo é o HELLO periódico. |
+| **Sinal de vida (keepalive)** | Mensagem só para dizer "estou vivo". No nosso protocolo é o HELLO periódico. |
 | **Idle timeout / limite de silêncio** | Tempo sem receber nada de um vizinho ao fim do qual ele é dado como em baixo (3 × o intervalo de HELLO que ele anunciou, 3 s). |
 | **Sonda** | Mensagem que pede ACK mas não é reenviada (o HELLO): serve para medir o RTT e a perda. |
 | **Número de arranque** | Número sorteado quando um nó arranca. Se mudar nos HELLOs, o nó reiniciou. |
@@ -282,18 +317,18 @@ Os termos técnicos deste documento, em palavras simples. A explicação de cada
 | **ISN** | O número com que o contador de pacotes começa (*initial sequence number*). É aleatório, para um nó reiniciado não repetir números antigos. |
 | **Fluxo / stream** | Um vídeo de um servidor, identificado pelo par (servidor, nº do vídeo). |
 | **CID** | No QUIC, o número que identifica uma ligação (*connection ID*). O nosso equivalente é o ID do nó. |
-| **PTO** | No QUIC, o equivalente ao nosso RTO (*probe timeout*). |
-| **ACK Delay** | No QUIC, o tempo que o recetor demorou a responder. Desconta-se para o RTT medir só a rede. |
-| **TLS / AEAD / tag** | A cifra do QUIC e o "selo" de 16 B que prova que o pacote não foi alterado. Não usamos. |
-| **Head-of-line blocking** | Quando uma mensagem perdida faz as seguintes ficarem à espera dela. Acontece no TCP. |
 | **Ack-eliciting** | Pacote que pede ACK. |
 | **struct, `!`** | Módulo do Python que converte os campos em bytes. O `!` quer dizer "ordem de rede": todas as máquinas leem os números da mesma maneira. |
 | **JSON** | Formato de texto para dados, ex: `{"id": 3}`. |
 | **asyncio** | Forma de o Python tratar várias coisas "ao mesmo tempo" numa só thread, com temporizadores. |
 | **Callback** | Função nossa que o transporte chama quando acontece algo (chegou uma mensagem, um vizinho caiu). |
-| **tc / netem** | Ferramenta do Linux para simular perda, atraso ou largura de banda num link. |
-| **ARP** | Protocolo que descobre o endereço da placa de rede (MAC) de um IP. Enquanto não tem resposta, os pacotes ficam retidos. |
-| **MTU** | Tamanho máximo de um pacote num link (1500 B). Um pacote maior é partido em fragmentos. |
 | **Inundação controlada** | Enviar uma mensagem a todos os vizinhos, que a passam aos deles, deitando fora as repetidas. |
-| **JOIN** | Pedido para receber um fluxo, enviado ao pai e renovado periodicamente. |
+| **JOIN / LEAVE** | Pedido para receber um fluxo, enviado ao pai e renovado periodicamente / aviso de que já não se quer. |
+| **Anúncio, ronda** | Mensagem periódica de cada servidor que espalha o custo até ele; a ronda é o número de cada envio. |
+| **Pai** | O vizinho de quem um nó recebe os vídeos de um servidor. |
+| **Vizinho viável** | Vizinho que pode ser pai sem criar um ciclo (regra anti-ciclo). |
+| **Margem** | Diferença mínima de custo para valer a pena trocar de pai. |
+| **WITHDRAW** | Aviso de "perdi a rota para este servidor". |
+| **RIP, DSDV, Babel, EIGRP, PIM** | Protocolos de encaminhamento reais em que nos inspirámos para algumas regras das rotas. |
+| **RFC** | Documento que especifica um protocolo da Internet (ex: o RFC 9000 é o QUIC). |
 | **CORE** | O emulador de redes onde corremos os testes. |
