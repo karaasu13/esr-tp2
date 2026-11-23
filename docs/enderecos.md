@@ -4,7 +4,7 @@ Uma secção por cenário. Para uma topologia nova, acrescentar uma secção com
 
 ## Cenário 2
 
-Topologia: `topologias/testte2.xml` · JSON: `configs/cenario2.json`
+Topologia: `topologias/cenario2.xml` · JSON: `configs/cenario2.json`
 
 ### Nós
 
@@ -49,11 +49,11 @@ O overlay liga PCs diretamente; os routers (n7, n8) não entram no JSON.
 
 ## Cenário 3
 
-Topologia: `topologias/underlay.xml` · JSON: `configs/cenario3.json`
+Topologia: `topologias/cenario3.xml` · JSON: `configs/cenario3.json`
 
 Figura 1 do guião adaptada: nós overlay só em PCs, 2.º servidor (S2) do lado oposto ao S1 (S1 em R6, S2 em R4), e 2 vizinhos possíveis por cliente.
 
-Endereços lidos da figura do CORE e ids lidos do `underlay.xml`, a 10/11/2026.
+Endereços lidos da figura do CORE e ids lidos do `cenario3.xml`, a 10/11/2026.
 
 ### Nós
 

@@ -676,7 +676,7 @@ def portas_servidor(pedidas: Sequence[int | None]) -> list[int]:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Arranca um nó OTT e regista-o no bootstrapper")
     parser.add_argument("ip_bootstrapper", help="IP do bootstrapper")
-    parser.add_argument("--porta", type=int, default=PORTA, help=f"porta UDP (predefinição: {PORTA})")
+    parser.add_argument("--porta", type=int, default=PORTA, help=f"porta UDP do bootstrapper (predefinição: {PORTA})")
     parser.add_argument("--porta-local", type=int, default=PORTA,
                         help=f"porta UDP local (predefinição: {PORTA})")
     parser.add_argument("--servidor", type=int, action="append", metavar="PORTA", nargs="?",

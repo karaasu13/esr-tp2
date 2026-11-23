@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from .protocolo import (
-    CORPO_ACK, FLUXO_CONTROLO, PORTA, SEM_ID, Flag, Pacote, Tipo,
+    BOOTSTRAPPER, CORPO_ACK, FLUXO_CONTROLO, PORTA, SEM_ID, Flag, Pacote, Tipo,
     codificar_corpo, descodificar_corpo, nome_tipo,
 )
 
@@ -206,12 +206,7 @@ class Transporte(asyncio.DatagramProtocol):
     # ------------------------------------------------------------ envio
     def register(self) -> int:
         """Envia um REGISTER fiável para o bootstrapper, devolvendo o id da mensagem."""
-        return self.send(0, Tipo.REGISTER, {}, fiavel=True)
-
-    def register_ack(self, no: int, id_novo: int, vizinhos: list[dict]) -> int:
-            """Envia um REGISTER_ACK, devolvendo o id da mensagem."""
-            return self.send(no, Tipo.REGISTER_ACK, {"id": id_novo, "vizinhos": vizinhos}, fiavel=True) 
-
+        return self.send(BOOTSTRAPPER, Tipo.REGISTER, {}, fiavel=True)
 
     def send(
         self,
@@ -350,9 +345,6 @@ class Transporte(asyncio.DatagramProtocol):
             if self._duplicado(addr, p.origem, p.id_msg):
                 log.debug("[%s] duplicado de %s (msg %d) ignorado", self.id, p.origem, p.id_msg)
                 return
-
-        if p.tipo in (Tipo.KEEPALIVE, Tipo.HELLO_ACK):
-            return  # já não se usam (versões antigas do protocolo): só contam como sinal de vida
 
         try:
             corpo = descodificar_corpo(p.tipo, p.corpo)

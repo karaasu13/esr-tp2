@@ -1,4 +1,3 @@
-import sys
 from time import time
 HEADER_SIZE = 12
 SEQ_MOD = 1 << 16  # o nº de sequência do RTP tem 16 bits e dá a volta: ... 65534, 65535, 0, 1 ...

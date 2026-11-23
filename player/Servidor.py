@@ -1,7 +1,4 @@
-import os, sys, socket
-
-from random import randint
-import sys, traceback, threading, socket
+import os, sys, socket, traceback, threading
 
 from VideoStream import VideoStream
 from RtpPacket import RtpPacket

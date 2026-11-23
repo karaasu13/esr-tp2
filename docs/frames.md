@@ -70,13 +70,10 @@ A perda de vídeo é muito maior do que a perda da rede. Isto vem da fragmentaç
 
 Assume perda independente em cada fragmento e num só link; com vários links com perda no caminho, as perdas acumulam.
 
-## Opções para o envio
+## Decisão: 1 frame = 1 pacote
 
-1. **Manter 1 frame = 1 pacote** (como o ProgEx). O IP fragmenta sozinho. É mais simples; o relatório explica a perda com esta tabela.
-2. **Partir o frame na aplicação** em pedaços de ≤ 1446 B, cada um com o nº do frame e o nº do pedaço, e o cliente junta-os. Mais trabalho, mas o nó sabe exatamente que pedaço se perdeu e pode, por exemplo, mostrar o frame anterior ou pedir só esse pedaço.
-
-Decisão em aberto, a tomar em grupo.
-
-## Próximo passo
-
-Quando o nó `ott` já reencaminhar vídeo: aplicar perda com `tc`, contar os frames que chegam ao cliente e comparar com a tabela acima.
+Ficámos com o que o ProgEx faz: cada frame vai num só pacote e o IP parte-o em fragmentos.
+Partir o frame na aplicação não resolve a perda, porque perder um pedaço estraga o frame na mesma;
+só ajudaria se também pedíssemos de novo o pedaço perdido, e a 20 frames por segundo o reenvio
+chegaria depois do frame seguinte. Por isso os testes com perda fazem-se com 1 a 5%, e o relatório
+explica o limite com a tabela acima.

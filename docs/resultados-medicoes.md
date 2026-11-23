@@ -2,11 +2,12 @@
 
 Medições no cliente para comparar a nossa solução (vídeo pelo overlay) com a solução sem overlay
 (o servidor envia uma cópia diretamente a cada cliente). Como se mede e o que significa cada
-número: `docs/testes.md`, secção 4.
+número: `docs/testes.md`, secção 5.
 
-Faltam os **testes de falhas** (piorar uma ligação com `tc`, cortar a ligação do pai). Ficam para
-depois de fechar a robustez das rotas (custo com as quatro medidas, troca com margem, WITHDRAW e
-reparação), porque é esse código que eles medem.
+Estes números são de 17/11, **antes do HELLO único** (ainda com o KEEPALIVE de 0,5 s): o tráfego
+de controlo mudou, por isso os testes com overlay têm de se repetir na versão final (ver "Quando
+repetir"). Faltam também os **testes de falhas** (piorar uma ligação, cortar a ligação do pai,
+servidor que cai).
 
 ## Condições
 
@@ -14,7 +15,7 @@ reparação), porque é esse código que eles medem.
 |---|---|
 | Data | 17/11, entre as 16:28 e as 16:43 |
 | Código | ramo `pedro/modo-medicao`, commit `8d8a1a6` (o protocolo é o da `main` em `ba0b8c8`) |
-| Topologia | cenário 3 (`topologias/underlay.xml`), no CORE |
+| Topologia | cenário 3 (`topologias/cenario3.xml`), no CORE |
 | Servidor | só o S1, com o vídeo 0 (`videos/movie.Mjpeg`); o S2 não arrancou |
 | Clientes | C1; C1 e C2; C1, C2 e C3 |
 | Duração | 60 s de medição no S1, depois de todos os clientes arrancarem |

@@ -3,8 +3,8 @@
 #
 # Uso (na máquina, fora do CORE, depois de abrir a topologia e carregar em Start):
 #   xhost +SI:localuser:root                        # uma vez por sessão gráfica
-#   sudo -E bash scripts/arrancar_cenario.sh 3      # cenário 3 (topologias/underlay.xml)
-#   sudo -E bash scripts/arrancar_cenario.sh 2      # cenário 2 (topologias/testte2.xml)
+#   sudo -E bash scripts/arrancar_cenario.sh 3      # cenário 3 (topologias/cenario3.xml)
+#   sudo -E bash scripts/arrancar_cenario.sh 2      # cenário 2 (topologias/cenario2.xml)
 #   sudo -E bash scripts/arrancar_cenario.sh 3 --janelas   # uma janela por programa, como antes
 #
 # Os programas correm sem janela e o que escrevem fica em logs/cenarioN-<nó>[-<programa>].log,
@@ -13,7 +13,7 @@
 # Para mexer num nó (parar, matar, piorar ou cortar uma ligação): scripts/no.sh.
 # Para parar tudo: sudo bash scripts/no.sh parar-tudo, e depois o Stop do CORE.
 #
-# Modo de medição (docs/testes.md, secção 4): em vez dos players, os clientes correm o
+# Modo de medição (docs/testes.md, secção 5): em vez dos players, os clientes correm o
 # player/Medidor.py, o S1 mede o tráfego da eth0, e no fim o script para os medidores e mostra a
 # análise. Tudo fica em logs/medicoes/cenarioN-<modo>-<K>cli/ (C1.csv, ..., S1-debito.log,
 # analise.txt e uma cópia dos logs dos nós). Entre dois testes: no.sh parar-tudo, Stop e Start.
