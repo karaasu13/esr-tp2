@@ -7,6 +7,8 @@ Recebe pacotes RTP por UDP e mostra cada frame (JPEG). Alterações ao original:
 - conta os frames recebidos e em falta (pelo nº de sequência RTP) e mostra-os ao fechar;
 - escreve no stdout (que os scripts do CORE guardam no log) um resumo de 5 em 5 s e cada
   paragem do vídeo (mais de 200 ms sem frame novo), com a hora;
+- aceita uma numeração nova quando chegam 2 frames seguidos muito atrás do último (troca para um
+  servidor com o relógio desacertado; ver RtpPacket.aceitar) e escreve-o no log;
 - tkMessageBox (Python 2) trocado por tkinter.messagebox.
 """
 from __future__ import annotations
@@ -22,7 +24,7 @@ from tkinter import Button, Label, E, N, S, W
 
 from PIL import Image, ImageTk
 
-from RtpPacket import RtpPacket, avanco_seq
+from RtpPacket import RtpPacket, aceitar, avanco_seq
 
 ATUALIZAR_MS = 20  # de quanto em quanto tempo a janela vai buscar o último frame
 RESUMO_S = 5  # de quanto em quanto tempo escreve o resumo no log
@@ -42,8 +44,19 @@ class ClienteGUI:
         self.master.protocol("WM_DELETE_WINDOW", self.handler)
         self.addr = addr
         self.port = int(port)
+        self.iniciarContagem()
+        self.lock = threading.Lock()
+        self.parar = threading.Event()
+        self.createWidgets()
+        self.openRtpPort()
+        threading.Thread(target=self.listenRtp, daemon=True).start()
+        self.master.after(ATUALIZAR_MS, self.updateMovie)
+
+    def iniciarContagem(self):
+        """Estado da receção (também usado pelos testes, que criam o player sem janela)."""
         self.frameNbr = 0       # último frame mostrado, contado sem a volta dos 16 bits do RTP
         self.ultimo_seq = None  # nº de sequência RTP (16 bits) desse frame
+        self.suspeito = None    # nº que confirmaria uma numeração nova (ver RtpPacket.aceitar)
         self.recebidos = 0      # frames aceites
         self.atrasados = 0      # chegaram fora de ordem ou repetidos (descartados)
         self.primeiro = None    # 1.º frame visto (mesma contagem que frameNbr)
@@ -51,12 +64,6 @@ class ClienteGUI:
         self.atrasados_antes = 0  # atrasados até ao último frame aceite
         self.ultimo_resumo = time.monotonic()
         self.ultimo_frame = None
-        self.lock = threading.Lock()
-        self.parar = threading.Event()
-        self.createWidgets()
-        self.openRtpPort()
-        threading.Thread(target=self.listenRtp, daemon=True).start()
-        self.master.after(ATUALIZAR_MS, self.updateMovie)
 
     def createWidgets(self):
         self.label = Label(self.master, height=19)
@@ -86,13 +93,15 @@ class ClienteGUI:
             rtp = RtpPacket()
             rtp.decode(data)
             seq = rtp.seqNum()
-            paragem = None
+            paragem = numeracao_nova = None
             with self.lock:
                 if self.ultimo_seq is None:  # 1.º frame
                     avanco = 1
                     self.frameNbr = seq - 1
                 else:
-                    avanco = avanco_seq(seq, self.ultimo_seq)
+                    avanco, self.suspeito = aceitar(seq, self.ultimo_seq, self.suspeito)
+                    if avanco > 0 and avanco_seq(seq, self.ultimo_seq) <= 0:
+                        numeracao_nova = (self.ultimo_seq, seq)
                 # descarta pacotes atrasados, como o original, mas aceita a volta 65535 -> 0
                 if avanco > 0:
                     agora = time.monotonic()
@@ -108,6 +117,10 @@ class ClienteGUI:
                     self.ultimo_frame = rtp.getPayload()
                 else:
                     self.atrasados += 1
+            if numeracao_nova:
+                antigo, novo = numeracao_nova
+                registar(f"numeração nova: seq {novo} depois do {antigo} "
+                         f"({-avanco_seq(novo, antigo)} frames para trás), aceite")
             if paragem:
                 segundos, antes, depois, atrasados = paragem
                 registar(f"{segundos * 1000:.0f} ms sem frame novo (frame {antes} → {depois}: "

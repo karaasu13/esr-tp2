@@ -31,7 +31,7 @@ Os números entre parênteses são os da lista original, de 3/11.
 | Período com variação ao acaso (31) | 2 s ± 10%, para os dois servidores não anunciarem sempre no mesmo instante | `ott/rotas.py` |
 | Lista de vídeos nos anúncios (parte do 7) | O anúncio leva os números dos vídeos do servidor | `ott/rotas.py` |
 | Ir ao servidor mais perto (parte do 7) | O cliente pede "o vídeo k" e fica com o servidor mais barato | `ott/__main__.py` (`--ver k`) |
-| Troca de servidor (8) | Se o servidor escolhido fica sem rota, o cliente pede o mesmo vídeo ao outro. **Problema:** congela o vídeo cerca de 2 s, porque o nº do frame está desfasado entre os servidores (o Pedro está a corrigir) | `ott/__main__.py` |
+| Troca de servidor (8) | Se o servidor escolhido fica sem rota, o cliente pede o mesmo vídeo ao outro. Os servidores numeram os frames pelo relógio, por isso a troca não congela por causa da numeração (antes: ~4 s); com relógios desacertados, o player aceita a numeração nova ao fim de 2 frames. **Por testar no CORE** | `ott/__main__.py`, `player/Servidor.py`, `player/RtpPacket.py` |
 | Renovação do pedido de vídeo | O JOIN é repetido de 2 em 2 s; um destino sem renovação durante 6 s é largado | `ott/__main__.py` |
 | Medições no cliente (21) | A hora de envio vai no timestamp do RTP, em ms; o medidor calcula atraso, jitter, perda e cortes | `player/Medidor.py`, `scripts/analisar_medicoes.py` |
 | PING com a hora em cada salto (23) | Mostra o caminho do vídeo e o tempo de cada salto. Só para testes | `ott/__main__.py` |

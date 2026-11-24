@@ -116,6 +116,17 @@ a hora de envio em milissegundos (no código do professor eram segundos), para o
 atraso. No CORE todos os nós partilham o relógio do computador, por isso a medida é fiável; numa
 rede real não seria.
 
+O nº de sequência do RTP também vem do relógio: o frame *n* sai no instante *n* / 20 s (contado
+desde 1970) e leva a imagem *n* do vídeo, em ciclo. Dois servidores com o mesmo vídeo enviam o
+mesmo número com a mesma imagem ao mesmo tempo, arranquem quando arrancarem, como um canal em
+direto (o MPEG-DASH em direto numera os segmentos pela hora UTC). Assim, a troca de servidor não
+congela nem salta. Antes, cada servidor contava a partir do seu arranque; o player deita fora os
+frames com número abaixo do último, e ficava parado até o servidor novo o alcançar (4 s no
+cenário 3, que arranca os servidores com 4 s de intervalo). Se os relógios dos servidores
+estiverem desacertados, o player aceita a numeração nova ao fim de 2 frames seguidos mais de 5
+frames atrás do último (como o RFC 3550, apêndice A.1): o congelamento fica em ~100 ms e a imagem
+salta o que os relógios diferem. O player escreve no log `numeração nova: seq X depois do Y`.
+
 ## Anúncios e escolha do pai (`ott/rotas.py`)
 
 Corpo do `ANNOUNCE` (JSON, não fiável):

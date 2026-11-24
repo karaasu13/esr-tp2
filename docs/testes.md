@@ -76,6 +76,8 @@ S1, S2:  python3 -m ott 10.0.21.20 --porta 5001 --servidor --servidor
 
 No log de cada cliente aparece `vídeo 0: servidor 17 (custo X)` (S1) ou `servidor 16` (S2). Quando um servidor para, os clientes dele mostram `vídeo 0: servidor <outro> (custo X), antes <o que parou>`.
 
+**Congelamento na troca de servidor.** No `cenarioN-<cliente>-player.log`, a linha `X ms sem frame novo (frame A → B: F em falta, K atrasados)` logo a seguir à troca diz quanto o vídeo parou. Com o nº do frame pelo relógio, deve dar perto do tempo de deteção, com **0 atrasados** e poucos frames em falta (os que se perderam durante a deteção). Antes dava ~4 s com ~80 atrasados quando o cliente passava para o S2. Uma linha `numeração nova: seq X depois do Y` quer dizer que os relógios dos servidores estão desacertados (não deve aparecer no CORE, onde todos usam o relógio do PC). Testar nos dois sentidos: `sudo bash scripts/no.sh parar S1` (os clientes do S1 passam para o S2) e, depois de o voltar a arrancar, `parar S2`; repetir com `matar`.
+
 ## 3. Perda e atraso com `tc`, à mão
 
 O `no.sh piorar` faz isto por nós. À mão, na shell do nó: cada nó do CORE tem a sua própria rede, por isso um `tc` só mexe nas interfaces desse nó. O diálogo de ligação do CORE não aplicou a perda no nosso caso, por isso usamos o `tc netem` diretamente.

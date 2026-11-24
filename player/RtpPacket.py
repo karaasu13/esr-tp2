@@ -13,6 +13,31 @@ def avanco_seq(novo, ultimo):
 	return dif if dif < SEQ_MOD // 2 else dif - SEQ_MOD
 
 
+MAX_ATRASO = 5  # frames (250 ms a 20/s): mais atrás do que isto já não é um pacote fora de ordem
+
+
+def aceitar(seq, ultimo, suspeito):
+	"""Decide se o player aceita o frame `seq`, sendo `ultimo` o último que aceitou.
+
+	Devolve (avanço, suspeito). Com avanço > 0 aceita, e faltaram avanço - 1 frames; com
+	avanço <= 0 descarta (repetido ou atrasado).
+
+	Um frame mais de MAX_ATRASO atrás do último não é um atraso normal: mudou a numeração (outro
+	servidor com o relógio desacertado, ou um servidor reiniciado). Como no RFC 3550 (apêndice A.1),
+	descarta o primeiro e guarda em `suspeito` o número que viria a seguir; se esse chegar, aceita
+	a numeração nova (avanço 1: a contagem continua, a imagem salta). Assim o congelamento fica em
+	~2 frames, em vez de durar até a numeração nova passar a antiga. `suspeito` começa a None.
+	"""
+	avanco = avanco_seq(seq, ultimo)
+	if avanco > 0:
+		return avanco, None
+	if avanco < -MAX_ATRASO:
+		if seq == suspeito:
+			return 1, None
+		return avanco, (seq + 1) % SEQ_MOD
+	return avanco, suspeito
+
+
 TS_MOD = 1 << 32  # o campo timestamp do RTP tem 32 bits
 
 

@@ -1,40 +1,43 @@
-import os, sys, socket, traceback, threading
+import os, sys, socket, traceback, threading, time
 
-from VideoStream import VideoStream
+from VideoStream import VideoStream, instante_do_numero, numero_do_instante
 from RtpPacket import RtpPacket
 
-class Servidor:	
+class Servidor:
 
 	clientInfo = {}
 
 	def sendRtp(self):
-		"""Send RTP packets over UDP."""
+		"""Send RTP packets over UDP.
+
+		O frame n sai no instante n / 20 do relógio (VideoStream.py), com a imagem n do vídeo em
+		ciclo. Se o envio se atrasar (ex: processo parado), salta para o frame de agora em vez de
+		enviar os atrasados de rajada. clientInfo['relogio'] troca o relógio nos testes.
+		"""
+		relogio = self.clientInfo.get('relogio', time.time)
+		video = self.clientInfo['videoStream']
+		n = numero_do_instante(relogio()) + 1
 		while True:
-			self.clientInfo['event'].wait(0.05)
-			
+			self.clientInfo['event'].wait(max(0.0, instante_do_numero(n) - relogio()))
+
 			# Stop sending if request is PAUSE or TEARDOWN
-			if self.clientInfo['event'].isSet():
+			if self.clientInfo['event'].is_set():
 				break
-				
-			data = self.clientInfo['videoStream'].nextFrame()
-			if not data:
-				# Fim do ficheiro: recomeça (em ciclo), com o nº do frame sempre a subir.
-				self.clientInfo['videoStream'].rewind()
-				data = self.clientInfo['videoStream'].nextFrame()
-			if data:
-				frameNumber = self.clientInfo['videoStream'].frameNbr()
-				try:
-					address = self.clientInfo['rtpAddr']
-					port = int(self.clientInfo['rtpPort'])
-					packet =  self.makeRtp(data, frameNumber)
-					self.clientInfo['rtpSocket'].sendto(packet,(address,port))
-				except OSError:
-					# Erro de rede (ex: o nó local ainda não arrancou): tenta o frame seguinte.
-					# Outros erros são bugs: a thread termina e o Python mostra o traceback.
-					print("Connection Error")
-					print('-'*60)
-					traceback.print_exc(file=sys.stdout)
-					print('-'*60)
+
+			n = max(n, numero_do_instante(relogio()))
+			try:
+				address = self.clientInfo['rtpAddr']
+				port = int(self.clientInfo['rtpPort'])
+				packet =  self.makeRtp(video.frame(n), n)
+				self.clientInfo['rtpSocket'].sendto(packet,(address,port))
+			except OSError:
+				# Erro de rede (ex: o nó local ainda não arrancou): tenta o frame seguinte.
+				# Outros erros são bugs: a thread termina e o Python mostra o traceback.
+				print("Connection Error")
+				print('-'*60)
+				traceback.print_exc(file=sys.stdout)
+				print('-'*60)
+			n += 1
 		# Close the RTP socket
 		self.clientInfo['rtpSocket'].close()
 		print("All done!")
