@@ -179,8 +179,8 @@ def analisar(cenario: str):
                 acontecimentos.append((r.hora, f"{nm(outro)} reiniciou", ("reiniciou", outro), nome))
             elif (m := R_NOSH.match(t)):
                 acao = m.group(1)
-                if "Ctrl+C" in acao:
-                    no.estado = "parado (Ctrl+C)"
+                if "parado" in acao:
+                    no.estado = "parado (CLOSE)"
                 elif "kill -9" in acao:
                     no.estado = "morto (kill -9)"
                 elif "arrancado" in acao:
