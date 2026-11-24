@@ -35,11 +35,8 @@ Os números entre parênteses são os da lista original, de 3/11.
 | Renovação do pedido de vídeo | O JOIN é repetido de 2 em 2 s; um destino sem renovação durante 6 s é largado | `ott/__main__.py` |
 | Medições no cliente (21) | A hora de envio vai no timestamp do RTP, em ms; o medidor calcula atraso, jitter, perda e cortes | `player/Medidor.py`, `scripts/analisar_medicoes.py` |
 | PING com a hora em cada salto (23) | Mostra o caminho do vídeo e o tempo de cada salto. Só para testes | `ott/__main__.py` |
+| Logs organizados e desenho da árvore (22) | O painel e o `scripts/arvore.py` leem os logs de todos os nós e desenham a árvore de cada vídeo, em texto e numa figura SVG com as posições do CORE, também num instante passado (`--hora`). Nenhum nó fica a conhecer a árvore: quem a junta é uma ferramenta de teste | `scripts/logs_ott.py`, `scripts/painel.py`, `scripts/arvore.py` |
 | Comparação com a solução sem overlay (24) | Com 3 clientes, o servidor envia 35% menos com overlay | [`resultados-medicoes.md`](resultados-medicoes.md) |
-
-## Em parte
-
-- **Logs organizados e desenho da árvore (22).** O painel (`scripts/painel.py`) já lê os logs de todos os nós e mostra de quem cada nó recebe, para onde envia e o caminho de cada cliente. Falta, se houver tempo, desenhar a árvore numa figura para o relatório. Nenhum nó fica a conhecer a árvore: quem a junta é uma ferramenta de teste.
 
 ## Por decidir (reunião dos extras)
 
