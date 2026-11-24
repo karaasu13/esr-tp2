@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from bootstrapper.servidor import Bootstrapper, carregar_configuracao
+from ott import __main__ as ott_main
 from ott import rotas as ott_rotas
 from ott.__main__ import NoOTT
 from ott.protocolo import Tipo
@@ -471,6 +472,72 @@ class TestCenario2(unittest.IsolatedAsyncioTestCase):
         self.assertIn(N1, nos[N3].transporte.neighbors)  # não deu o N1 como em baixo
         await self._esperar(lambda: FLUXO in nos[N3]._ultimo_video)  # vídeo de novo, pelo N2
         self.assertEqual(nos[N3].tabela_fluxos[FLUXO].pai, N2)
+
+    async def test_pai_novo_que_tambem_nao_envia_e_vigiado(self):
+        """O N3 perde o vídeo do N1 e passa para o N2, que também não lho envia (ex: o N2 recebia
+        através do mesmo nó que falhou). Ao fim de PRAZO_PAI_NOVO o N3 volta a procurar outro pai,
+        em vez de ficar preso até o vizinho ser dado como em baixo."""
+        nos = await self._montar()
+        self._fixar_medidas(nos[N3], {N1: (0.0, 0.0015), N2: (0.0, 0.0)})
+        self._fixar_medidas(nos[N2], {N1: (0.0, 0.0)})
+        rota_n3 = nos[N3].rotas.servidores[S1]
+        await self._esperar(lambda: rota_n3.anuncios.get(N2) is not None and rota_n3.viavel(rota_n3.anuncios[N2]))
+        self.assertEqual(nos[N3].rotas.pai(S1), N1)
+
+        async def video():
+            while True:
+                nos[S1]._frame_do_servidor(0, FRAMES[0])
+                await asyncio.sleep(0.05)
+
+        tarefa = asyncio.create_task(video())
+        self.addCleanup(tarefa.cancel)
+        await self._esperar(lambda: FLUXO in nos[N3]._ultimo_video)
+
+        for no in (N1, N2):  # nem o N1 nem o N2 enviam DATA ao N3
+            enviar = nos[no].transporte.send
+            nos[no].transporte.send = lambda destino, tipo, *a, _e=enviar, **kw: (
+                0 if tipo == Tipo.DATA and destino == N3 else _e(destino, tipo, *a, **kw))
+        chamadas = []
+        procurar = nos[N3].rotas.pai_sem_video
+        nos[N3].rotas.pai_sem_video = lambda srv, s: (chamadas.append(time.monotonic()), procurar(srv, s))
+
+        await self._esperar(lambda: nos[N3].rotas.pai(S1) == N2, timeout=1.0)
+        troca = time.monotonic()
+        await self._esperar(lambda: any(t > troca for t in chamadas), timeout=2.0)
+        espera = min(t for t in chamadas if t > troca) - troca
+        self.assertGreaterEqual(espera, ott_main.PRAZO_PAI_NOVO - 0.3)  # deu o prazo ao pai novo
+        self.assertLess(espera, ott_main.PRAZO_PAI_NOVO + 0.6)
+
+    async def test_join_recuperar_poe_o_pai_novo_a_vigiar_o_seu_pai(self):
+        """O C1 perdeu o vídeo e pede-o ao N3 com a marca "recuperar". O N3 nunca recebeu o vídeo,
+        porque o pai dele (N1) não lho envia: em vez de ficar à espera para sempre, o N3 dá ao N1
+        PRAZO_PAI_NOVO e passa para o N2, e o vídeo chega ao C1."""
+        nos = await self._montar()
+        self._fixar_medidas(nos[N3], {N1: (0.0, 0.0015), N2: (0.0, 0.0)})
+        self._fixar_medidas(nos[N2], {N1: (0.0, 0.0)})
+        rota_n3 = nos[N3].rotas.servidores[S1]
+        await self._esperar(lambda: rota_n3.anuncios.get(N2) is not None and rota_n3.viavel(rota_n3.anuncios[N2]))
+        self.assertEqual(nos[N3].rotas.pai(S1), N1)
+
+        enviar = nos[N1].transporte.send  # o N1 nunca envia DATA ao N3
+        nos[N1].transporte.send = lambda destino, tipo, *a, **kw: (
+            0 if tipo == Tipo.DATA and destino == N3 else enviar(destino, tipo, *a, **kw))
+
+        async def video():
+            while True:
+                nos[S1]._frame_do_servidor(0, FRAMES[0])
+                await asyncio.sleep(0.05)
+
+        tarefa = asyncio.create_task(video())
+        self.addCleanup(tarefa.cancel)
+        await asyncio.sleep(1.5)
+        self.assertEqual(nos[N3].rotas.pai(S1), N1)  # sem a marca, o N3 não vigia um vídeo que nunca teve
+
+        inicio = time.monotonic()
+        nos[N3]._receber_join(C1, FLUXO, {"recuperar": True})
+        await self._esperar(lambda: nos[N3].rotas.pai(S1) == N2, timeout=ott_main.PRAZO_PAI_NOVO + 1.0)
+        self.assertGreaterEqual(time.monotonic() - inicio, ott_main.PRAZO_PAI_NOVO - 0.3)
+        self.assertEqual(await receber(self.players[C1]), FRAMES[0])  # o vídeo chega ao C1 pelo N2
 
     @staticmethod
     def _fixar_medidas(no, medidas):

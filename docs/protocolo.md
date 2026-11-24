@@ -51,7 +51,7 @@ Cabeçalho fixo de **14 bytes**, ordem de rede (`struct "!BBBHHIHB"`).
 | 0x06 | ACK | não | pn confirmado, 4 B binário | transporte |
 | 0x07 | CLOSE | sim | `{}` | nó vizinho |
 | 0x10 | ANNOUNCE | não | `{"srv": 1, "ronda": 1731600000, "videos": [0], "rtt": 2.0, "jitter": 0.1, "perda": 0.0, "saltos": 1}` | escolha de caminhos |
-| 0x11 | JOIN | sim no pedido inicial; não nas renovações | vazio; fluxo no cabeçalho | gestão de fluxos |
+| 0x11 | JOIN | sim no pedido inicial; não nas renovações | vazio, ou `{"recuperar": true}` (ver "Falta de vídeo do pai"); fluxo no cabeçalho | gestão de fluxos |
 | 0x12 | LEAVE | sim | vazio; fluxo no cabeçalho | gestão de fluxos |
 | 0x13 | WITHDRAW | sim | `{"srv": 1}` | escolha de caminhos |
 | 0x14 | PING | não | `{"n": 12, "caminho": [{"id": 17, "t": 1731245000.123}, …]}` | teste do caminho |
@@ -157,9 +157,17 @@ inteiro (a soma das ligações).
 - **Falta de vídeo do pai.** Um nó com um fluxo ativo que fica **300 ms** sem `DATA` do pai
   (6 frames a 20 por segundo) passa ao vizinho viável mais barato, se houver. Não dá o pai
   como em baixo no transporte, só troca de pai; sem vizinho viável, fica com o pai e volta a
-  tentar de 0,25 em 0,25 s. Só vigia depois de ter chegado o primeiro `DATA` do pai atual, para
-  não disparar no arranque nem logo a seguir a uma troca. O ciclo corre de 0,25 em 0,25 s, por
-  isso a troca dá-se entre 0,3 e 0,55 s depois do último frame.
+  tentar de 0,25 em 0,25 s. No arranque só vigia depois do primeiro `DATA`, para não disparar
+  enquanto o servidor ainda não envia. O ciclo corre de 0,25 em 0,25 s, por isso a troca dá-se
+  entre 0,3 e 0,55 s depois do último frame.
+- **Pai novo que também não envia.** O vizinho escolhido pode receber o vídeo através do mesmo
+  nó que falhou, que ainda ninguém deu como em baixo. Por isso, depois de uma troca num fluxo
+  que já tinha vídeo, o pai novo tem **1 s** para enviar o primeiro `DATA`; se não enviar, o nó
+  volta a procurar. O `JOIN` para o pai novo leva a marca `{"recuperar": true}`: se esse pai
+  também não está a receber o vídeo, vigia o seu próprio pai da mesma forma e passa a marca no
+  `JOIN` que manda para cima. Sem isto, o nó ficava preso a um pai sem vídeo até ele ser dado
+  como em baixo (3 s). No arranque não há marca, por isso ninguém troca de pai enquanto o servidor
+  ainda não envia vídeo.
 - **Servidor mais perto (só no cliente, `--ver k`).** Os servidores têm os mesmos vídeos pela
   mesma ordem. O cliente pede o vídeo k ao servidor com rota mais barata entre os que o
   anunciam em `videos`. Na 1.ª escolha espera duas rondas (4 s) depois da 1.ª rota, para ouvir
@@ -259,6 +267,7 @@ Um IP não configurado ou uma mensagem `REGISTER` inválida é registado no log 
 | Margem para trocar de pai | mais de 15% e mais de 2 unidades | Não andar a saltar entre caminhos parecidos |
 | Renovação do JOIN / validade de um destino | 2 s / 6 s | Como no PIM: o que não é renovado expira sozinho |
 | Falta de vídeo do pai | 300 ms | 6 frames a 20 por segundo |
+| Prazo de um pai novo para enviar | 1 s | Chega para o `JOIN` subir alguns saltos e o vídeo descer, mesmo com centenas de ms por ligação |
 | PING | de 5 em 5 s | Só para testes |
 | Portas locais do vídeo | 24000 + k (vídeo k, no servidor), 25000 (player) | Entre o nó e o `Servidor.py` / `Cliente.py`, na mesma máquina |
 

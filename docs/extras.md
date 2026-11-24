@@ -21,7 +21,7 @@ Os números entre parênteses são os da lista original, de 3/11.
 |---|---|---|
 | Reparação local (1) | Quando o pai cai, o nó passa logo ao vizinho viável mais barato, sem esperar pelo anúncio seguinte | `ott/rotas.py` |
 | Aviso de perda de rota (2) | Um nó sem pai e sem vizinho viável manda WITHDRAW, para quem recebia dele procurar outro caminho | `ott/rotas.py` |
-| Detetar a falha pela falta de vídeo (5) | 300 ms sem vídeo do pai fazem trocar de pai. No CORE, o vídeo parou 0,35 a 0,55 s, contra cerca de 3 s pelo silêncio | `ott/__main__.py` |
+| Detetar a falha pela falta de vídeo (5) | 300 ms sem vídeo do pai fazem trocar de pai. No CORE, o vídeo parou 0,35 a 0,55 s, contra cerca de 3 s pelo silêncio. Um pai novo que também não envie (porque dependia do mesmo nó) tem 1 s antes de se procurar outro; o `JOIN` leva a marca "recuperar" para os nós acima fazerem o mesmo | `ott/__main__.py` |
 | Mudar de caminho quando o atual piora (4) | Troca por um vizinho melhor só com mais de 15% e 2 unidades de diferença (a margem) | `ott/rotas.py` |
 | Custo com quatro medidas (6) | RTT, variação do atraso, perda e saltos. **A fórmula vai mudar** para uma métrica ao estilo ETX/ETT (decidido a 22/11): o peso 20 da perda não tinha fundamento | `custo()` em `ott/rotas.py` |
 | Anunciar de novo quando a rota muda (27) | Os nós a seguir ficam a conhecer o melhor custo, e não o do primeiro anúncio a chegar | `ott/rotas.py` |
