@@ -95,7 +95,11 @@ falhar e voltar, nenhum dos dois reinicia, por isso nenhum se apresentaria. Com 
 Os 3 primeiros a 1 s seguem a ideia de desistir ao fim de cerca de 3 HELLOs, mas o nó abranda
 em vez de parar.
 
-No encerramento gracioso, o nó envia `CLOSE` fiável aos vizinhos vivos e aguarda os ACKs até
+**Fechar um nó.** `Ctrl+C` mata o nó na hora, sem avisar ninguém, como numa falha (pedido do
+professor): os vizinhos dão por isso pela falta de vídeo ou pelo silêncio. A saída avisada faz-se
+com `sair` + Enter no terminal do nó, ou com `kill <pid>` (SIGTERM).
+
+Na saída avisada, o nó envia `CLOSE` fiável aos vizinhos vivos e aguarda os ACKs até
 1 segundo. O recetor remove imediatamente o vizinho e o estado de fluxos associado, e deixa de
 lhe mandar HELLOs; se o aviso se perder, o vizinho é dado como em baixo pelo silêncio.
 

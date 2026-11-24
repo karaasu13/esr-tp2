@@ -104,7 +104,7 @@ parar_tudo() {
     [ "$(readlink "/proc/$pid/ns/net" 2>/dev/null)" != "$host" ] || continue
     cmd="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)"
     case "$cmd" in
-      *"-m ott"*|*"-m bootstrapper"*) kill -INT "$pid" 2>/dev/null || true ;;
+      *"-m ott"*|*"-m bootstrapper"*) kill -TERM "$pid" 2>/dev/null || true ;;  # o nó sai com CLOSE
       *) kill -TERM "$pid" 2>/dev/null || true ;;
     esac
     n=$((n + 1))

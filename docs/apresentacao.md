@@ -51,12 +51,13 @@ e pode abrir-se a qualquer altura, porque relê os logs desde o início.
 como o guião pede). No S1, o fluxo (17, 0) tem como destinos só os vizinhos que pediram, uma cópia
 por vizinho, mesmo que por trás haja vários clientes.
 
-**Um nó sai com aviso.** `Ctrl+C` na shell do N1. Os vizinhos mostram `vizinho 13 avisou que vai
-sair` e o C1 troca logo para o N3 (`pai para o servidor 17: 11 … (vizinho 13 em baixo)`).
+**Um nó falha.** `Ctrl+C` na shell do N1: o nó morre logo, sem avisar ninguém (como pediu o
+professor; os programas que ele arrancou morrem com ele). O C1 troca de pai em menos de meio
+segundo, pela falta de vídeo (`… ms sem vídeo de 13`); uns 3 s depois os vizinhos dão o N1 como em
+baixo pelo silêncio.
 
-**Um nó morre sem aviso.** `Ctrl+\` na shell do N1 (mata o nó sem lhe dar tempo de avisar; os
-programas que ele arrancou morrem com ele). O C1 troca de pai em menos de meio segundo, pela falta
-de vídeo (`… ms sem vídeo de 13`); uns 3 s depois os vizinhos dão o N1 como em baixo pelo silêncio.
+**Um nó sai com aviso.** Na shell do N1, escrever `sair` e Enter. Os vizinhos mostram
+`vizinho 13 avisou que vai sair` e o C1 troca logo para o N3 (`pai … (vizinho 13 em baixo)`).
 
 **O nó volta.** Na shell do N1, seta para cima e Enter. Os vizinhos mostram `vizinho 13 voltou`.
 
@@ -65,7 +66,8 @@ pelo N1 sobe e os nós abaixo dele passam para outro caminho (`melhor do que 13,
 tirar: `tc qdisc del dev eth0 root`. (A `eth0` de um PC leva todas as ligações desse nó.)
 
 **Um servidor cai.** `Ctrl+C` na shell do S1. Os clientes que viam o S1 mostram
-`vídeo 0: servidor 16 (custo X), antes 17` e o vídeo continua a partir do S2. (Problema conhecido:
+`vídeo 0: servidor 16 (custo X), antes 17` e o vídeo continua a partir do S2, uns 3 s depois
+(o tempo de os vizinhos do S1 darem pelo silêncio e a rota para o S1 desaparecer). (Problema conhecido:
 a imagem pode ficar parada cerca de 2 s, porque os dois servidores vão em frames diferentes.)
 
 **Pedido de socorro ao avô.** `Ctrl+C` no N3: o C1 fica só com o N1 e pede-lhe o avô

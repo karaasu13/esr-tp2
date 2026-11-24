@@ -9,7 +9,7 @@
 # do C1 para o S1):
 #   1. arranque: o overlay forma-se e os clientes recebem vídeo;
 #   2. cortar a ligação C1–N1 e repô-la: ficam em baixo e voltam a ligar-se sozinhos;
-#   3. parar o N1 (Ctrl+C) e voltar a arrancá-lo: saída imediata (CLOSE) e regresso;
+#   3. parar o N1 (kill, sai a avisar) e voltar a arrancá-lo: saída avisada (CLOSE) e regresso;
 #   4. matar o N1 (kill -9) e voltar a arrancá-lo: em baixo pelo silêncio e reinício detetado.
 # Antes e depois de cada passo guarda o painel em logs/teste-hello/NN-<passo>.txt. Os logs dos
 # nós ficam em logs/cenario3-*.log, como sempre. No fim deixa tudo a correr, para os prints.
@@ -39,7 +39,7 @@ bash scripts/no.sh repor C1 N1
 esperar 10
 foto 03-ligacao-reposta
 
-passo "2. parar o N1 (Ctrl+C, envia CLOSE)"
+passo "2. parar o N1 (kill: sai a avisar, envia CLOSE)"
 bash scripts/no.sh parar N1
 esperar 6
 foto 04-n1-parado

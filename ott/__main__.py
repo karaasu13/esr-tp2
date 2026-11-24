@@ -7,6 +7,7 @@ import ipaddress
 import logging
 import os
 import random
+import signal
 import socket
 import sys
 from pathlib import Path
@@ -874,9 +875,18 @@ def ficheiro_de_log(nome: str, pedido: str | None) -> Path | None:
     return None if sessao is None else PROJETO / "logs" / f"core-{sessao}" / f"{nome}.log"
 
 
+COMANDOS_SAIR = ("sair", "q")
+
+
 async def correr(no: NoOTT, videos: list, abrir_player: bool, nome: str,
                  log_player: Path | None = None) -> None:
-    """Arranca o nó e, depois do registo, os programas locais (servidores de vídeo e player)."""
+    """Arranca o nó e, depois do registo, os programas locais (servidores de vídeo e player).
+
+    Duas formas de fechar o nó:
+    * Ctrl+C (SIGINT): o nó morre logo, sem avisar ninguém, como numa falha (pedido do professor).
+      Os vizinhos dão por isso pela falta de vídeo ou pelo silêncio dos HELLOs.
+    * 'sair' + Enter no terminal do nó, ou `kill <pid>` (SIGTERM): saída avisada, com CLOSE.
+    Os programas que o nó arrancou morrem com ele nos dois casos (ver ott/locais.py)."""
     def escrever(linha: str) -> None:  # linhas do player: no terminal e, se houver, no ficheiro
         print(linha, flush=True)
         if log_player is not None:
@@ -886,6 +896,28 @@ async def correr(no: NoOTT, videos: list, abrir_player: bool, nome: str,
             except OSError:
                 pass
 
+    loop = asyncio.get_running_loop()
+    sair = asyncio.Event()
+
+    def falhar() -> None:
+        log.warning("Ctrl+C: o nó termina já, sem avisar os vizinhos (como uma falha)")
+        logging.shutdown()
+        os._exit(130)
+
+    def ler_comando() -> None:
+        linha = sys.stdin.readline()
+        if not linha:  # o terminal fechou: deixa de ler
+            loop.remove_reader(sys.stdin.fileno())
+        elif linha.strip().lower() in COMANDOS_SAIR:
+            sair.set()
+        elif linha.strip():
+            log.info("comando desconhecido: %r (para sair a avisar os vizinhos: 'sair')",
+                     linha.strip())
+
+    loop.add_signal_handler(signal.SIGINT, falhar)
+    loop.add_signal_handler(signal.SIGTERM, sair.set)
+    if sys.stdin.isatty():
+        loop.add_reader(sys.stdin.fileno(), ler_comando)
     locais = ProgramasLocais(nome, escrever)
     try:
         await no.start()
@@ -893,7 +925,9 @@ async def correr(no: NoOTT, videos: list, abrir_player: bool, nome: str,
             await locais.servidores(videos)
         if abrir_player:
             await locais.player(no.transporte.id)
-        await asyncio.Event().wait()
+        log.info("para sair avisando os vizinhos: 'sair' + Enter; Ctrl+C mata o nó sem avisar")
+        await sair.wait()
+        log.info("a sair: avisa os vizinhos (CLOSE)")
     finally:
         await locais.fechar()
         await no.shutdown()
@@ -982,7 +1016,8 @@ def main() -> None:
         no.fluxos_player = fluxos
         no.videos_pedidos = videos_pedidos
         asyncio.run(correr(no, videos, abrir_player, nome, log_player))
-    except KeyboardInterrupt:
+        log.info("nó OTT terminado")
+    except KeyboardInterrupt:  # Ctrl+C antes de o ciclo do nó arrancar
         log.info("nó OTT terminado")
     except (OSError, RuntimeError, ValueError) as exc:
         parser.exit(1, f"Erro: {exc}\n")

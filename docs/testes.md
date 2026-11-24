@@ -27,7 +27,7 @@ No cenário 3, os dois servidores têm os mesmos 2 vídeos e os clientes pedem o
 **Mexer num nó ou numa ligação** a partir do terminal normal (cada ação fica marcada nos logs e aparece no painel):
 
 ```bash
-sudo bash scripts/no.sh parar N1                # Ctrl+C: sai e avisa os vizinhos (CLOSE)
+sudo bash scripts/no.sh parar N1                # kill: sai e avisa os vizinhos (CLOSE)
 sudo bash scripts/no.sh matar N1                # kill -9: falha sem aviso
 sudo bash scripts/no.sh arrancar N1             # volta a arrancar, com o comando do arranque
 sudo bash scripts/no.sh piorar C1 N1 delay 50ms # ou loss 2%, nos dois sentidos da ligação C1–N1
@@ -110,8 +110,8 @@ tc filter add dev eth0 parent 1:0 protocol ip u32 match ip dst 10.0.3.20/32 flow
 
 ## 4. Parar, reiniciar e cortar à mão
 
-- **Morrer sem aviso, no próprio terminal:** `Ctrl+\` (o nó morre sem mandar CLOSE; os programas que ele arrancou morrem com ele).
-- **Parar:** `Ctrl+C` no terminal do nó, ou noutro terminal do mesmo nó:
+- **Falha (morrer sem aviso), no próprio terminal:** `Ctrl+C` (ou `Ctrl+\`). O nó morre sem mandar CLOSE; os programas que ele arrancou morrem com ele.
+- **Sair a avisar (CLOSE):** `sair` + Enter no terminal do nó, ou noutro terminal do mesmo nó:
 
   ```bash
   ss -Hulpn 'sport = :5000'        # mostra o pid de quem usa a porta do nó

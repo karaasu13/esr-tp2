@@ -225,8 +225,8 @@ def analisar(fonte: Fonte):
                 acontecimentos.append((r.hora, f"{nome}: {nm(volta)} voltou, fecha a ligação de emergência a {nm(avo)}", None, None))
             elif (m := R_NOSH.match(t)):
                 acao = m.group(1)
-                if "Ctrl+C" in acao:
-                    no.estado = "parado (Ctrl+C)"
+                if "parado" in acao:
+                    no.estado = "parado (CLOSE)"
                 elif "kill -9" in acao:
                     no.estado = "morto (kill -9)"
                 elif "arrancado" in acao:
