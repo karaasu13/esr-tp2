@@ -151,11 +151,11 @@ class NoOTT:
         if self._registado:
             for vizinho in sorted(self._confirmados):
                 mensagens.append(
-                    self.transporte.send(vizinho, Tipo.CLOSE, {}, fiavel=True)
+                    (vizinho, self.transporte.send(vizinho, Tipo.CLOSE, {}, fiavel=True))
                 )
         limite = asyncio.get_running_loop().time() + max(0.0, timeout)
         while mensagens and asyncio.get_running_loop().time() < limite:
-            if not any(msg in self.transporte._pendentes for msg in mensagens):
+            if not any(self.transporte.pendente(no, msg) for no, msg in mensagens):
                 break
             await asyncio.sleep(0.01)
         self.video.close()
