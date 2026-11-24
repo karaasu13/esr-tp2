@@ -2,7 +2,7 @@
 # Mexe num nó do cenário que está a correr, a partir do teu terminal normal (onde colar funciona).
 # Usa a sessão do CORE aberta e o cenário arrancado pelo scripts/arrancar_cenario.sh.
 #
-#   sudo bash scripts/no.sh parar N1               # Ctrl+C no nó: sai e avisa os vizinhos (CLOSE)
+#   sudo bash scripts/no.sh parar N1               # kill (SIGTERM): sai e avisa os vizinhos (CLOSE)
 #   sudo bash scripts/no.sh matar N1               # kill -9: o nó morre sem avisar (falha a sério)
 #   sudo bash scripts/no.sh arrancar N1            # volta a arrancar o nó, com o comando do arranque
 #   sudo bash scripts/no.sh piorar C1 N1 delay 50ms   # mais atraso na ligação C1–N1 (nos dois sentidos)
@@ -88,7 +88,7 @@ ligacao() {
 case "$ACAO" in
   parar)
     [ "$#" -ge 1 ] || uso
-    sinal "$1" INT "parado com Ctrl+C" "${2:-}"
+    sinal "$1" TERM "parado com kill: sai a avisar os vizinhos (CLOSE)" "${2:-}"
     ;;
   matar)
     [ "$#" -ge 1 ] || uso
