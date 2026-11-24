@@ -49,6 +49,8 @@ arranca com um só comando: o nó de um servidor arranca ele próprio um `Servid
 linha do log, porque no CORE o nome da máquina é o do nó. Para a apresentação, ver
 [`apresentacao.md`](apresentacao.md).
 
+Cada nó arrancado assim guarda também o seu log em `logs/core-<sessão>/<nó>.log` (o do player em `<nó>-player.log`). Para ver tudo junto, no PC: `python3 scripts/painel.py` (lê a sessão mais recente).
+
 Se o player não abrir (erro do ecrã), correr uma vez no PC, fora do CORE:
 `xhost +SI:localuser:root`.
 

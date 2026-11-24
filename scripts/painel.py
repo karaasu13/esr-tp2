@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
-"""Painel do cenário: lê os logs dos nós (logs/cenarioN-*.log) e mostra, de 2 em 2 s, o estado
-de cada nó, o caminho de cada cliente e os últimos acontecimentos, sempre com os nomes dos nós.
+"""Painel do cenário: lê os logs dos nós e mostra, de 2 em 2 s, o estado de cada nó, o caminho de
+cada cliente e os últimos acontecimentos, sempre com os nomes dos nós.
 
-    python3 scripts/painel.py 3            # cenário 3; atualiza sozinho (Ctrl+C para sair)
-    python3 scripts/painel.py 3 --uma-vez  # mostra uma vez e sai
+    python3 scripts/painel.py              # nós arrancados à mão: a sessão do CORE mais recente
+                                           # (logs/core-<sessão>/, escritos pelos próprios nós)
+    python3 scripts/painel.py 3            # cenário 3 arrancado pelo script (logs/cenario3-*.log)
+    python3 scripts/painel.py --pasta DIR  # os logs de uma pasta (<nó>.log, <nó>-player.log)
+    ... --uma-vez                          # mostra uma vez e sai
+
+Corre no PC, fora do CORE, e pode abrir-se a qualquer altura: relê os logs desde o início.
 
 Só lê os ficheiros de log: não fala com os nós e não precisa de sudo. É uma ferramenta de
 teste, que corre fora do overlay: nenhum nó fica a conhecer a árvore por causa dela.
@@ -84,12 +89,38 @@ def ler(ficheiro: Path) -> list[Registo]:
     return registos
 
 
-def carregar(cenario: str):
-    """Lê os logs do cenário: {nó: registos do nó overlay} e {nó: registos do player}."""
+@dataclass
+class Fonte:
+    """De onde vêm os logs: os do script (cenario) ou uma pasta de uma sessão à mão (pasta)."""
+    cenario: str = ""
+    pasta: Path | None = None
+
+    def ficheiros(self):
+        if self.pasta is not None:  # logs/core-1/C1-player.log -> ["C1", "player"]
+            return [(f, f.stem.split("-")) for f in sorted(self.pasta.glob("*.log"))]
+        # logs/cenario3-C1-player.log -> ["C1", "player"]
+        return [(f, f.stem.split("-")[1:]) for f in sorted(LOGS.glob(f"cenario{self.cenario}-*.log"))]
+
+    def descricao(self) -> str:
+        if self.pasta is not None:
+            try:
+                return f"Sessão {self.pasta.name} · lido de {self.pasta.relative_to(LOGS.parent)}/"
+            except ValueError:
+                return f"Lido de {self.pasta}/"
+        return f"Cenário {self.cenario} · lido de logs/cenario{self.cenario}-*.log"
+
+
+def sessao_mais_recente() -> Path | None:
+    """A pasta logs/core-<sessão> mais recente (cada nó arrancado à mão escreve lá o seu log)."""
+    pastas = [p for p in LOGS.glob("core-*") if p.is_dir()]
+    return max(pastas, key=lambda p: p.stat().st_mtime) if pastas else None
+
+
+def carregar(fonte: Fonte):
+    """Lê os logs: {nó: registos do nó overlay} e {nó: registos do player}."""
     principais, players = {}, {}
-    for f in sorted(LOGS.glob(f"cenario{cenario}-*.log")):
-        partes = f.stem.split("-")[1:]  # cenario3-C1-player -> ["C1", "player"]
-        if not partes:
+    for f, partes in fonte.ficheiros():
+        if not partes or not partes[0]:
             continue
         nome, sufixo = partes[0], (partes[1] if len(partes) > 1 else "")
         if sufixo == "player":
@@ -99,8 +130,8 @@ def carregar(cenario: str):
     return principais, players
 
 
-def analisar(cenario: str):
-    principais, players = carregar(cenario)
+def analisar(fonte: Fonte):
+    principais, players = carregar(fonte)
     nos = {nome: No(nome) for nome in principais}
     for nome, regs in principais.items():
         for r in regs:
@@ -248,12 +279,12 @@ def tabela(cabecalho, linhas) -> list[str]:
     return [fmt(cabecalho)] + [fmt(lin) for lin in linhas]
 
 
-def desenhar(cenario: str) -> str:
-    nos, nm, acontecimentos = analisar(cenario)
+def desenhar(fonte: Fonte) -> str:
+    nos, nm, acontecimentos = analisar(fonte)
     largura = shutil.get_terminal_size((150, 50)).columns
     negrito = (lambda s: f"\033[1m{s}\033[0m") if sys.stdout.isatty() else (lambda s: s)
     servidores = sorted({srv for n in nos.values() for srv in n.pais}, key=lambda s: ordem(nm(s)))
-    out = [negrito(f"Cenário {cenario} · {time.strftime('%H:%M:%S')} · lido de logs/cenario{cenario}-*.log"
+    out = [negrito(f"{fonte.descricao()} · {time.strftime('%H:%M:%S')}"
                    f" · atualiza de {ATUALIZAR_S} em {ATUALIZAR_S} s (Ctrl+C para sair)"), ""]
 
     lista = sorted((n for n in nos.values() if n.id or n.pais), key=lambda n: ordem(n.nome))
@@ -301,15 +332,25 @@ def desenhar(cenario: str) -> str:
 
 
 def main() -> None:
-    if len(sys.argv) < 2 or sys.argv[1] not in ("1", "2", "3"):
-        sys.exit("Uso: python3 scripts/painel.py 2|3 [--uma-vez]")
-    cenario = sys.argv[1]
+    args = [a for a in sys.argv[1:] if a != "--uma-vez"]
+    if args and args[0] in ("1", "2", "3") and len(args) == 1:
+        fonte = Fonte(cenario=args[0])
+    elif len(args) == 2 and args[0] == "--pasta":
+        fonte = Fonte(pasta=Path(args[1]).resolve())
+    elif not args:
+        pasta = sessao_mais_recente()
+        if pasta is None:
+            sys.exit("Não há logs de nós arrancados à mão em logs/core-*/. "
+                     "Para os do script: python3 scripts/painel.py 2|3")
+        fonte = Fonte(pasta=pasta)
+    else:
+        sys.exit("Uso: python3 scripts/painel.py [2|3 | --pasta DIR] [--uma-vez]")
     if "--uma-vez" in sys.argv:
-        print(desenhar(cenario))
+        print(desenhar(fonte))
         return
     try:
         while True:
-            ecra = desenhar(cenario)
+            ecra = desenhar(fonte)
             sys.stdout.write("\033[H\033[2J" + ecra + "\n")
             sys.stdout.flush()
             time.sleep(ATUALIZAR_S)

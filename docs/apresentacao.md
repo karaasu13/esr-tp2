@@ -35,6 +35,15 @@ Uns segundos depois de arrancarem os servidores:
 - em cada cliente: `vídeo 0: servidor 17 (custo X)` (ou 16), e a imagem aparece no player;
 - de 5 em 5 s, nos nós do caminho: `PING n do vídeo (17, 0): 17 → 13 (+0.8 ms) → 14 (+0.6 ms)`.
 
+## Painel (opcional)
+
+Depois de ligar os nós, no PC (fora do CORE), na pasta do projeto: `python3 scripts/painel.py`.
+Cada nó arrancado à mão guarda o seu log em `logs/core-<sessão>/<nó>.log` (e o do player em
+`<nó>-player.log`), e o painel lê a sessão mais recente: o estado e os vizinhos de cada nó, o pai
+para cada servidor, para onde envia cada fluxo, o caminho do vídeo de cada cliente (último PING) e
+os últimos acontecimentos, com os nomes dos nós. Só lê os ficheiros: não mexe nos nós nem na rede,
+e pode abrir-se a qualquer altura, porque relê os logs desde o início.
+
 ## O que mostrar
 
 **Tabela de rotas e cópia única.** Cada mudança escreve a tabela de fluxos do nó:
