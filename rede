@@ -1,0 +1,194 @@
+#!/usr/bin/env bash
+# Atalhos para os testes no CORE: um comando curto para cada coisa, a partir da pasta do projeto.
+# Chama os scripts de scripts/ e pede o sudo sozinho quando é preciso.
+#
+#   ./rede start 3            arranca o cenário 3 (depois do Start do CORE); --janelas: uma janela por programa
+#   ./rede stop               para tudo (antes do Stop do CORE)
+#
+#   ./rede kill N1 [N2 ...]   kill -9: o nó morre sem avisar (falha a sério)
+#   ./rede down N1 [N2 ...]   Ctrl+C: o nó sai e avisa os vizinhos (CLOSE)
+#   ./rede up N1 [N2 ...]     volta a arrancar o nó, com o mesmo comando do arranque
+#   ./rede restart N1         Ctrl+C e arranca de novo (restart N1 -9: com kill -9)
+#
+#   ./rede cut C1 N1          corta a ligação C1–N1 (100% de perda nos dois sentidos)
+#   ./rede loss C1 N1 2%      perda na ligação C1–N1
+#   ./rede delay C1 N1 50ms   atraso na ligação C1–N1
+#   ./rede fix C1 N1          tira o que o cut/loss/delay pôs nessa ligação
+#
+#   ./rede painel             painel ao vivo (status: só uma vez)
+#   ./rede arvore             desenha a árvore de cada vídeo (texto e logs/arvore-cenarioN.svg)
+#   ./rede logs N1            segue o log do N1 (logs N1 player: o do player)
+#   ./rede run C1 ip addr     corre um comando dentro do nó
+#   ./rede hello              os 4 testes do HELLO (cenário 3)
+#   ./rede medir overlay 2    medição com overlay e 2 clientes (ou: medir direto 2)
+#   ./rede test               testes automáticos
+#
+# Os nomes em português também servem: matar, parar, arrancar, reiniciar, cortar, perda, atraso,
+# repor, estado, correr. Para o player, um servidor de vídeo ou o bootstrapper, junta o programa
+# depois do nó: ./rede kill S1 video0, ./rede up C1 player.
+set -euo pipefail
+
+PROJ="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$PROJ"
+NO_SH="${NO_SH:-scripts/no.sh}"  # trocável só para testar este script
+
+ajuda() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit "${1:-0}"; }
+
+# Comandos que mexem nos nós do CORE precisam de root: volta a correr este script com sudo -E
+# (o -E mantém o DISPLAY, para os players e o painel abrirem no teu ecrã).
+com_root() {
+  if [ "$(id -u)" -ne 0 ]; then
+    exec sudo -E "$0" "$@"
+  fi
+}
+
+cenario_atual() {
+  [ -f logs/.cenario_atual ] || { echo "Ainda não há nenhum cenário arrancado (./rede start 3)." >&2; exit 1; }
+  cat logs/.cenario_atual
+}
+
+# alvos ARG...: "N1 N2 S1 video0" -> uma linha por alvo: "N1", "N2", "S1 video0".
+alvos() {
+  local atual=""
+  for a in "$@"; do
+    case "$a" in
+      player | video | video[0-9]* | bootstrapper)
+        [ -n "$atual" ] || { echo "\"$a\" tem de vir depois do nome de um nó (ex: S1 $a)." >&2; exit 1; }
+        atual="$atual $a" ;;
+      *)
+        [ -z "$atual" ] || echo "$atual"
+        atual="$a" ;;
+    esac
+  done
+  [ -z "$atual" ] || echo "$atual"
+}
+
+# para_cada AÇÃO ARG...: corre o no.sh AÇÃO para cada nó (ex: kill N1 N2).
+para_cada() {
+  local acao="$1" alvo
+  shift
+  [ "$#" -ge 1 ] || { echo "Falta o nó (ex: ./rede ${CMD} N1)." >&2; exit 1; }
+  while read -r alvo; do
+    # shellcheck disable=SC2086
+    bash "$NO_SH" "$acao" $alvo
+  done < <(alvos "$@")
+}
+
+# arrancar_quando_parar ALVO: espera que o programa saia (até 5 s) e arranca-o de novo.
+arrancar_quando_parar() {
+  local alvo="$1"
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    sleep 0.5
+    # shellcheck disable=SC2086
+    if bash "$NO_SH" arrancar $alvo 2>/dev/null; then return 0; fi
+  done
+  echo "O $alvo ainda não saiu ao fim de 5 s; tenta: ./rede kill $alvo e ./rede up $alvo" >&2
+  return 1
+}
+
+CMD="${1:-help}"
+[ $# -gt 0 ] && shift
+
+case "$CMD" in
+  start | arrancar-cenario)
+    [ "$#" -ge 1 ] || { echo "Que cenário? (ex: ./rede start 3)" >&2; exit 1; }
+    com_root "$CMD" "$@"
+    exec bash scripts/arrancar_cenario.sh "$@"
+    ;;
+  stop | parar-tudo)
+    com_root "$CMD" "$@"
+    exec bash "$NO_SH" parar-tudo
+    ;;
+  kill | matar)
+    com_root "$CMD" "$@"
+    para_cada matar "$@"
+    ;;
+  down | parar)
+    com_root "$CMD" "$@"
+    para_cada parar "$@"
+    ;;
+  up | arrancar)
+    com_root "$CMD" "$@"
+    para_cada arrancar "$@"
+    ;;
+  restart | reiniciar)
+    com_root "$CMD" "$@"
+    sinal=parar
+    args=()
+    for a in "$@"; do
+      if [ "$a" = "-9" ] || [ "$a" = "--kill" ]; then sinal=matar; else args+=("$a"); fi
+    done
+    [ "${#args[@]}" -ge 1 ] || { echo "Falta o nó (ex: ./rede restart N1)." >&2; exit 1; }
+    while read -r alvo; do
+      # shellcheck disable=SC2086
+      bash "$NO_SH" "$sinal" $alvo
+      arrancar_quando_parar "$alvo"
+    done < <(alvos "${args[@]}")
+    ;;
+  cut | cortar)
+    [ "$#" -eq 2 ] || { echo "Uso: ./rede cut C1 N1" >&2; exit 1; }
+    com_root "$CMD" "$@"
+    exec bash "$NO_SH" cortar "$1" "$2"
+    ;;
+  fix | repor)
+    [ "$#" -eq 2 ] || { echo "Uso: ./rede fix C1 N1" >&2; exit 1; }
+    com_root "$CMD" "$@"
+    exec bash "$NO_SH" repor "$1" "$2"
+    ;;
+  loss | perda)
+    [ "$#" -eq 3 ] || { echo "Uso: ./rede loss C1 N1 2%" >&2; exit 1; }
+    com_root "$CMD" "$@"
+    exec bash "$NO_SH" piorar "$1" "$2" loss "${3%\%}%"
+    ;;
+  delay | atraso)
+    [ "$#" -ge 3 ] || { echo "Uso: ./rede delay C1 N1 50ms [10ms]   (o 2.º valor é a variação)" >&2; exit 1; }
+    com_root "$CMD" "$@"
+    a="$1" b="$2"
+    shift 2
+    exec bash "$NO_SH" piorar "$a" "$b" delay "$@"
+    ;;
+  run | correr)
+    [ "$#" -ge 2 ] || { echo "Uso: ./rede run C1 comando..." >&2; exit 1; }
+    com_root "$CMD" "$@"
+    exec bash "$NO_SH" correr "$@"
+    ;;
+  painel)
+    exec python3 scripts/painel.py "$@"
+    ;;
+  status | estado)
+    exec python3 scripts/painel.py --uma-vez "$@"
+    ;;
+  arvore | árvore | tree)
+    exec python3 scripts/arvore.py "$@"
+    ;;
+  logs | log)
+    [ "$#" -ge 1 ] || { echo "Uso: ./rede logs N1 [player|video0|bootstrapper]" >&2; exit 1; }
+    f="logs/cenario$(cenario_atual)-$1${2:+-$2}.log"
+    [ -f "$f" ] || { echo "Não há $f." >&2; exit 1; }
+    exec tail -n 40 -F "$f"
+    ;;
+  hello)
+    com_root "$CMD" "$@"
+    exec bash scripts/testar_hello.sh "$@"
+    ;;
+  medir)
+    [ "$#" -ge 1 ] || { echo "Uso: ./rede medir overlay|direto [K clientes] [segundos]" >&2; exit 1; }
+    com_root "$CMD" "$@"
+    modo="$1"
+    extra=(--medir "$modo")
+    [ -z "${2:-}" ] || extra+=(--clientes "$2")
+    [ -z "${3:-}" ] || extra+=(--duracao "$3")
+    exec bash scripts/arrancar_cenario.sh "$(cat logs/.cenario_atual 2>/dev/null || echo 3)" "${extra[@]}"
+    ;;
+  test | testes)
+    exec python3 -m unittest "$@"
+    ;;
+  help | ajuda | -h | --help)
+    ajuda 0
+    ;;
+  *)
+    echo "Comando desconhecido: $CMD" >&2
+    echo >&2
+    ajuda 1
+    ;;
+esac

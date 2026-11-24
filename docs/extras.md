@@ -21,7 +21,7 @@ Os números entre parênteses são os da lista original, de 3/11.
 |---|---|---|
 | Reparação local (1) | Quando o pai cai, o nó passa logo ao vizinho viável mais barato, sem esperar pelo anúncio seguinte | `ott/rotas.py` |
 | Aviso de perda de rota (2) | Um nó sem pai e sem vizinho viável manda WITHDRAW, para quem recebia dele procurar outro caminho | `ott/rotas.py` |
-| Detetar a falha pela falta de vídeo (5) | 300 ms sem vídeo do pai fazem trocar de pai. No CORE, o vídeo parou 0,35 a 0,55 s, contra cerca de 3 s pelo silêncio | `ott/__main__.py` |
+| Detetar a falha pela falta de vídeo (5) | 300 ms sem vídeo do pai fazem trocar de pai. No CORE, o vídeo parou 0,35 a 0,55 s, contra cerca de 3 s pelo silêncio. Um pai novo que também não envie (porque dependia do mesmo nó) tem 1 s antes de se procurar outro; o `JOIN` leva a marca "recuperar" para os nós acima fazerem o mesmo | `ott/__main__.py` |
 | Mudar de caminho quando o atual piora (4) | Troca por um vizinho melhor só com mais de 15% e 2 unidades de diferença (a margem) | `ott/rotas.py` |
 | Custo com quatro medidas (6) | RTT, variação do atraso, perda e saltos. **A fórmula vai mudar** para uma métrica ao estilo ETX/ETT (decidido a 22/11): o peso 20 da perda não tinha fundamento | `custo()` em `ott/rotas.py` |
 | Anunciar de novo quando a rota muda (27) | Os nós a seguir ficam a conhecer o melhor custo, e não o do primeiro anúncio a chegar | `ott/rotas.py` |
@@ -31,15 +31,12 @@ Os números entre parênteses são os da lista original, de 3/11.
 | Período com variação ao acaso (31) | 2 s ± 10%, para os dois servidores não anunciarem sempre no mesmo instante | `ott/rotas.py` |
 | Lista de vídeos nos anúncios (parte do 7) | O anúncio leva os números dos vídeos do servidor | `ott/rotas.py` |
 | Ir ao servidor mais perto (parte do 7) | O cliente pede "o vídeo k" e fica com o servidor mais barato | `ott/__main__.py` (`--ver k`) |
-| Troca de servidor (8) | Se o servidor escolhido fica sem rota, o cliente pede o mesmo vídeo ao outro. Os servidores numeram os frames pelo relógio, por isso a troca não congela por causa da numeração (antes: ~4 s); com relógios desacertados, o player aceita a numeração nova ao fim de 2 frames. **Por testar no CORE** | `ott/__main__.py`, `player/Servidor.py`, `player/RtpPacket.py` |
+| Troca de servidor (8) | Se o servidor escolhido fica sem rota, o cliente pede o mesmo vídeo ao outro. Os servidores numeram os frames pelo relógio, por isso a troca não congela por causa da numeração (antes: ~4 s); com relógios desacertados, o player aceita a numeração nova ao fim de 2 frames. No CORE (24/11): trocas para o S2 sem paragem e com 0 atrasados; falta o teste com `parar` | `ott/__main__.py`, `player/Servidor.py`, `player/RtpPacket.py` |
 | Renovação do pedido de vídeo | O JOIN é repetido de 2 em 2 s; um destino sem renovação durante 6 s é largado | `ott/__main__.py` |
 | Medições no cliente (21) | A hora de envio vai no timestamp do RTP, em ms; o medidor calcula atraso, jitter, perda e cortes | `player/Medidor.py`, `scripts/analisar_medicoes.py` |
 | PING com a hora em cada salto (23) | Mostra o caminho do vídeo e o tempo de cada salto. Só para testes | `ott/__main__.py` |
+| Logs organizados e desenho da árvore (22) | O painel e o `scripts/arvore.py` leem os logs de todos os nós e desenham a árvore de cada vídeo, em texto e numa figura SVG com as posições do CORE, também num instante passado (`--hora`). Nenhum nó fica a conhecer a árvore: quem a junta é uma ferramenta de teste | `scripts/logs_ott.py`, `scripts/painel.py`, `scripts/arvore.py` |
 | Comparação com a solução sem overlay (24) | Com 3 clientes, o servidor envia 35% menos com overlay | [`resultados-medicoes.md`](resultados-medicoes.md) |
-
-## Em parte
-
-- **Logs organizados e desenho da árvore (22).** O painel (`scripts/painel.py`) já lê os logs de todos os nós e mostra de quem cada nó recebe, para onde envia e o caminho de cada cliente. Falta, se houver tempo, desenhar a árvore numa figura para o relatório. Nenhum nó fica a conhecer a árvore: quem a junta é uma ferramenta de teste.
 
 ## Por decidir (reunião dos extras)
 

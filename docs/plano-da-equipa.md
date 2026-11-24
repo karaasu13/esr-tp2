@@ -81,7 +81,7 @@ Em cada item contam a ideia, a qualidade do código e a qualidade dos testes e d
 - com e sem overlay, com 1 a 3 clientes: com 3 clientes, o servidor envia 35% menos com overlay; o preço são 3 a 5 ms de atraso e um arranque mais lento (6 a 9 s, contra 2 s). Os números estão no `docs/resultados-medicoes.md`.
 
 **Problemas conhecidos:**
-- A troca de servidor congela o vídeo cerca de 4 s (os dois servidores têm o nº do frame desfasado, porque arrancam com 4 s de intervalo). Corrigido no ramo `pedro/troca-servidor` (nº do frame pelo relógio e numeração nova aceite no player), por testar no CORE. Sobra o tempo de deteção (~1,4 s no último teste) e as trocas em rajada entre os dois servidores.
+- A troca de servidor congela o vídeo cerca de 4 s (os dois servidores têm o nº do frame desfasado, porque arrancam com 4 s de intervalo). Corrigido no ramo `pedro/troca-servidor` (nº do frame pelo relógio e numeração nova aceite no player). No CORE (24/11, `logs/depois-correcao-teste4/`): 3 trocas para o S2 sem paragem acima de 200 ms e com 0 atrasados (antes: 4,4 a 5,7 s e ~80 atrasados); com o S2 morto, 3,1 s parado, todo de deteção pelo silêncio. Falta o teste com `parar S1`, na bateria de medições. Sobra o tempo de deteção (~1,4 s no último teste) e as trocas em rajada entre os dois servidores.
 - A perda é medida com poucos HELLOs: com 1 a 2% de perda, as rotas podem trocar de pai sem necessidade.
 - O peso da perda no custo (20) não tem fundamento: vai ser trocado por uma métrica ao estilo ETX/ETT.
 - Falta o custo na linha da tabela de fluxos que o nó escreve no log.
