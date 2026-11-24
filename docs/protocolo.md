@@ -163,10 +163,14 @@ As quatro medidas vão em separado e cada nó aplica a fórmula do custo, que es
 (`custo()` em `ott/rotas.py`). Para mudar os pesos não é preciso mudar o formato da mensagem:
 
 ```
-custo = rtt (ms) + jitter (ms) + 20 × perda (%) + saltos
+custo = rtt (ms) + jitter (ms) + 100 × perda (%) + saltos
 ```
 
-Como é uma soma, serve para uma ligação (`rtt_min + jitter + 20 × perda + 1`) e para o caminho
+O peso 100 da perda: como o vídeo não é reenviado, perder 1% dos pacotes estraga mais o
+vídeo do que 100 ms de atraso (com 1% de perda por pacote IP perdem-se cerca de 6% dos frames,
+porque cada frame vai em cerca de 6 fragmentos). Começou em 20; o professor sugeriu 100.
+
+Como é uma soma, serve para uma ligação (`rtt_min + jitter + 100 × perda + 1`) e para o caminho
 inteiro (a soma das ligações).
 
 - O nó com `--servidor` envia um `ANNOUNCE` a todos os vizinhos de 2 em 2 s (±10% ao acaso).

@@ -58,7 +58,7 @@ Em cada item contam a ideia, a qualidade do código e a qualidade dos testes e d
 | Bootstrapper | Só dá o número e os vizinhos, lidos de um JSON | Regra do professor |
 | **Vizinhos: HELLO único** | Um só HELLO periódico faz de apresentação, sinal de vida e nova tentativa: 1 s com o vizinho vivo; 3 a 1 s e depois 5 s com quem não responde; nenhum para quem saiu com CLOSE. Leva o nº de arranque, o intervalo e os vizinhos ouvidos | Hello do OSPF e BFD. Em baixo ao fim de 3 intervalos (BFD), nunca abaixo de 3 × RTO (QUIC). Decidido a 17/11; na `main` a 22/11 (PR #13) |
 | Rotas | Os servidores anunciam-se de 2 em 2 s; cada nó escolhe o pai pelo custo; os clientes pedem o vídeo (JOIN) pelo caminho inverso, com renovação de 2 em 2 s | Vetor de distâncias com nº de sequência (DSDV, Babel); JOIN como no PIM |
-| Custo | Hoje: RTT mínimo + variação do atraso + 20 × perda (%) + 1 por salto; troca por um pai melhor só com mais de 15% e 2 unidades de diferença. **A trocar** por uma métrica ao estilo ETX/ETT (decidido a 22/11), porque o peso 20 da perda não tinha fundamento | Um custo único que cresce a cada salto, para a regra anti-ciclo |
+| Custo | RTT mínimo + variação do atraso + 100 × perda (%) + 1 por salto; troca por um pai melhor só com mais de 15% e 2 unidades de diferença. O professor achou a fórmula elegante e sugeriu o peso 100 (era 20) | Um custo único que cresce a cada salto, para a regra anti-ciclo |
 | Anti-ciclo | Só pode ser pai um vizinho com ronda mais nova, ou a mesma ronda com custo anunciado menor | Condição de viabilidade do Babel e do EIGRP |
 | Falhas | WITHDRAW quando um nó fica sem rota; anúncios valem 6 s; 300 ms sem vídeo do pai fazem trocar de pai | No CORE: troca em 0,34–0,50 s depois de um nó morrer, contra 3,5 s pelo silêncio |
 | Vídeos | 2 servidores com os mesmos 2 vídeos; o cliente pede o vídeo k ao servidor mais barato e troca de servidor se esse ficar sem rota | Decidido em grupo |
@@ -83,7 +83,6 @@ Em cada item contam a ideia, a qualidade do código e a qualidade dos testes e d
 **Problemas conhecidos:**
 - A troca de servidor congela o vídeo cerca de 2 s (os dois servidores têm o nº do frame desfasado).
 - A perda é medida com poucos HELLOs: com 1 a 2% de perda, as rotas podem trocar de pai sem necessidade.
-- O peso da perda no custo (20) não tem fundamento: vai ser trocado por uma métrica ao estilo ETX/ETT.
 - Falta o custo na linha da tabela de fluxos que o nó escreve no log.
 - O arranque do cliente com overlay demora 6 a 9 s (inclui esperar duas rondas de anúncios antes de escolher o servidor).
 

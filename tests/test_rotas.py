@@ -91,6 +91,28 @@ class TestRotas(unittest.TestCase):
         self.assertEqual(rotas.pai(9), 3)
         self.assertEqual(self.mudancas, [(9, 2), (9, 4), (9, None), (9, 3)])
 
+    def test_pai_que_falhou_nao_volta_logo_amortecimento(self):
+        rotas = self.rotas
+        rotas.receber(2, anuncio(10))  # pai 2, custo 2
+        rotas.receber(4, anuncio(11, rtt=50.0, saltos=2))  # reserva viável, bem mais cara
+        rotas.vizinho_em_baixo(2)
+        self.assertEqual(rotas.pai(9), 4)
+        rotas.receber(2, anuncio(12))  # o 2 volta, muito mais barato
+        rotas.receber(4, anuncio(12, rtt=50.0, saltos=2))
+        self.assertEqual(rotas.pai(9), 4)  # castigado: não se volta já para ele
+        rotas._castigo[2] = 0.0  # passaram os 30 s
+        rotas.receber(2, anuncio(13))
+        rotas.receber(4, anuncio(13, rtt=50.0, saltos=2))
+        self.assertEqual(rotas.pai(9), 2)
+
+    def test_castigado_ainda_serve_se_nao_houver_outro(self):
+        rotas = self.rotas
+        rotas.receber(2, anuncio(10))
+        rotas.vizinho_em_baixo(2)
+        self.assertIsNone(rotas.pai(9))
+        rotas.receber(2, anuncio(11))  # o único caminho: antes um pai castigado do que nenhum
+        self.assertEqual(rotas.pai(9), 2)
+
     def test_reserva_da_mesma_ronda_so_se_anunciar_menos_do_que_eu(self):
         rotas = self.rotas
         rotas.receber(4, anuncio(10, rtt=3.0, saltos=2))  # pai 4; anuncio 5 + 2 = 7
@@ -137,8 +159,8 @@ class TestTrocaComMargem(unittest.TestCase):
         self.transporte.perdas[2] = 0.01
         self.rotas.receber(2, {"srv": 9, "ronda": 10, "videos": [0], "rtt": 3.0, "saltos": 1,
                                "jitter": 0.5, "perda": 1.0})
-        # (3 + 1) ms de RTT + (0,5 + 0,5) ms de jitter + 20 x (1 + 1)% + 2 saltos
-        self.assertAlmostEqual(self.rotas.servidores[9].anuncios[2].custo, 4 + 1 + 40 + 2)
+        # (3 + 1) ms de RTT + (0,5 + 0,5) ms de jitter + 100 x (1 + 1)% + 2 saltos
+        self.assertAlmostEqual(self.rotas.servidores[9].anuncios[2].custo, 4 + 1 + 200 + 2)
         self.rotas.receber(3, anuncio(10))  # sem jitter nem perda: contam como 0
         self.assertAlmostEqual(self.rotas.servidores[9].anuncios[3].custo, 3.0)
 
