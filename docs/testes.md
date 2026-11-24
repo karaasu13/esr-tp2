@@ -254,9 +254,9 @@ falha com a interface em baixo, os dois reagem depressa.
 
 ### Pedido de socorro ao avô
 
-No cenário 3 (cada cliente tem 2 vizinhos): parar o N3 (`Ctrl+C`). O C1 fica só com o N1 e, uns
+No cenário 3 (cada cliente tem 2 vizinhos): fazer falhar o N3 (`Ctrl+C`). O C1 fica só com o N1 e, uns
 segundos depois, mostra `só um vizinho vivo (13): pede-lhe o avô` e `avô guardado (via 13): 17 …`.
-Matar o N1 (`Ctrl+\`): o C1 mostra `sem vizinhos vivos: pede socorro ao avô 17`, o S1 mostra
+Fazer falhar o N1 (`Ctrl+C`): o C1 mostra `sem vizinhos vivos: pede socorro ao avô 17`, o S1 mostra
 `pedido de socorro do nó 14 … aceite como vizinho`, e o vídeo volta, agora direto do S1
 (`PING … 17 → 14`). Voltar a arrancar o N1: 6 s depois de o N1 voltar, o C1 fecha a ligação ao S1
 (`fecha a ligação de emergência ao 17`). No painel, estes passos aparecem nos acontecimentos.

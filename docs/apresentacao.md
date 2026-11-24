@@ -71,7 +71,7 @@ tirar: `tc qdisc del dev eth0 root`. (A `eth0` de um PC leva todas as ligações
 a imagem pode ficar parada cerca de 2 s, porque os dois servidores vão em frames diferentes.)
 
 **Pedido de socorro ao avô.** `Ctrl+C` no N3: o C1 fica só com o N1 e pede-lhe o avô
-(`avô guardado (via 13): 17 …`). `Ctrl+\` no N1: o C1 liga-se ao S1 (`pede socorro ao avô 17`) e o
+(`avô guardado (via 13): 17 …`). Depois, `Ctrl+C` no N1: o C1 liga-se ao S1 (`pede socorro ao avô 17`) e o
 vídeo volta direto do S1. Voltar a arrancar o N1: 6 s depois, o C1 fecha a ligação ao S1.
 
 **Árvore de cada vídeo** (no PC): `python3 scripts/arvore.py`, sem os clientes.
