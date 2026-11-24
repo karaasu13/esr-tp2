@@ -13,7 +13,7 @@ class Servidor:
 			self.clientInfo['event'].wait(0.05)
 			
 			# Stop sending if request is PAUSE or TEARDOWN
-			if self.clientInfo['event'].isSet():
+			if self.clientInfo['event'].is_set():
 				break
 				
 			data = self.clientInfo['videoStream'].nextFrame()

@@ -59,23 +59,24 @@ python3 -m unittest -v                                   # testes automáticos
 sudo -E bash scripts/arrancar_cenario.sh 3               # cenário 3 inteiro no CORE (depois do Start)
 ```
 
-Cada programa à parte:
+Cada nó à mão, com um só comando (o nó arranca sozinho os servidores de vídeo e o player):
 
 ```
-python3 -m bootstrapper configs/cenario2.json                     # bootstrapper
-python3 -m ott <ip-do-bootstrapper>                               # nó intermédio
-python3 -m ott <ip-do-bootstrapper> --servidor --servidor         # nó do servidor: um --servidor por vídeo (portas 24000, 24001, ...)
-python3 player/Servidor.py videos/movie.Mjpeg 127.0.0.1 24000     # vídeo 0 para o nó local (movie2.Mjpeg na 24001 para o vídeo 1)
-python3 -m ott <ip-do-bootstrapper> --player --ver 0              # nó do cliente: pede o vídeo 0 e entrega-o ao player (porta 25000)
-python3 player/Cliente.py                                         # player
+python3 -m bootstrapper configs/cenario3.json      # bootstrapper (no cenário 3, no PC do N4, porta 5001)
+python3 -m ott 10.0.21.20:5001                     # nó intermédio
+python3 -m ott 10.0.21.20:5001 --videos movie movie2   # servidor: um Servidor.py por vídeo (vídeo 0, vídeo 1)
+python3 -m ott 10.0.21.20:5001 --ver 0             # cliente: pede o vídeo 0 e abre o player
 ```
 
 - `--ver k`: pede o vídeo k ao servidor mais barato entre os que o anunciam (os servidores têm os
   mesmos vídeos pela mesma ordem). Se esse servidor ficar sem rota, o cliente passa para o outro.
+  Sem `--player`, o nó abre o player sozinho.
 - `--ver <servidor>:<vídeo>` (ex: `--ver 1:0`): pede o vídeo a esse servidor.
-- `--porta P`: porta do bootstrapper, se não for a 5000 (no cenário 3 é a 5001).
+- `<ip>:<porta>`: a porta do bootstrapper, se não for a 5000 (no cenário 3 é a 5001). `--porta P` faz o mesmo.
+- `--servidor` e `--player` (usados pelos scripts): o nó não arranca nada, liga-se a um
+  `Servidor.py` (portas 24000, 24001, …) e a um player (porta 25000) já abertos.
 
-Os comandos de cada cenário, nó a nó, estão em [`docs/testes.md`](docs/testes.md).
+Os comandos de cada cenário, nó a nó, estão em [`docs/testes.md`](docs/testes.md); o guião da apresentação, em [`docs/apresentacao.md`](docs/apresentacao.md).
 
 ## Regras de trabalho
 

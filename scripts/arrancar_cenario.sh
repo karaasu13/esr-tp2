@@ -95,12 +95,11 @@ case "$CENARIO" in
   CLIENTES=(C1 C2 C3 C4 C5)
   IP_CLIENTE=([C1]=10.0.19.20 [C2]=10.0.17.20 [C3]=10.0.15.20 [C4]=10.0.24.20 [C5]=10.0.26.20)
   # Bootstrapper no PC do N4 (10.0.21.20). Como o N4 também corre um nó na porta 5000,
-  # o bootstrapper usa a porta 5001 (cópia do JSON em /tmp; o configs/cenario3.json não muda).
-  BOOT="10.0.21.20 --porta 5001"
+  # o bootstrapper usa a porta 5001 (está no configs/cenario3.json).
+  BOOT="10.0.21.20:5001"
   OTT_CLIENTE="python3 -m ott $BOOT --player --ver 0"
   arrancar_base() {
-    sed 's/"port": 5000/"port": 5001/' "$PROJ/configs/cenario3.json" > /tmp/cenario3-bootstrapper.json
-    no N4 "python3 -m bootstrapper /tmp/cenario3-bootstrapper.json" bootstrapper
+    no N4 "python3 -m bootstrapper configs/cenario3.json" bootstrapper
     for n in N4 N1 N2 N3 N5 N6; do
       no "$n" "python3 -m ott $BOOT"
     done

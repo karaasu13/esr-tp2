@@ -43,7 +43,27 @@ Os programas correm em segundo plano, por isso o Stop do CORE não chega para os
 
 ## 2. Arrancar à mão
 
-Na pasta do projeto, numa shell de cada nó (duplo clique no nó no CORE). Os nós usam um IP do bootstrapper alcançável a partir deles.
+Numa shell de cada nó (duplo clique no nó no CORE), primeiro `cd` para a pasta do projeto. Cada nó
+arranca com um só comando: o nó de um servidor arranca ele próprio um `Servidor.py` por vídeo
+(`--videos`), e o de um cliente abre o player (`--ver`). O nome do nó (N1, C1, …) aparece em cada
+linha do log, porque no CORE o nome da máquina é o do nó. Para a apresentação, ver
+[`apresentacao.md`](apresentacao.md).
+
+Se o player não abrir (erro do ecrã), correr uma vez no PC, fora do CORE:
+`xhost +SI:localuser:root`.
+
+**Cenário 3.** O bootstrapper corre no PC do N4, na porta 5001 (está no `configs/cenario3.json`).
+Os servidores arrancam por último, para o 1.º anúncio já encontrar as ligações feitas.
+
+```
+N4:      python3 -m bootstrapper configs/cenario3.json      # e noutra shell do N4:
+N4:      python3 -m ott 10.0.21.20:5001
+N1 a N6: python3 -m ott 10.0.21.20:5001
+C1 a C5: python3 -m ott 10.0.21.20:5001 --ver 0
+S1, S2:  python3 -m ott 10.0.21.20:5001 --videos movie movie2
+```
+
+No log de cada cliente aparece `vídeo 0: servidor 17 (custo X)` (S1) ou `servidor 16` (S2). Quando um servidor para, os clientes dele mostram `vídeo 0: servidor <outro> (custo X), antes <o que parou>`.
 
 **Cenário 2.** O bootstrapper corre no router n7; os nós usam o IP do n7 do lado deles (`10.0.0.1` no S1, `10.0.1.1` no N1, `10.0.2.1` no N2) e os ligados ao n8 usam `10.0.6.1`. O nó do S1 arranca por último.
 
@@ -52,29 +72,12 @@ n7:  python3 -m bootstrapper configs/cenario2.json
 N1:  python3 -m ott 10.0.1.1
 N2:  python3 -m ott 10.0.2.1
 N3:  python3 -m ott 10.0.6.1
-C1:  python3 player/Cliente.py                       # e noutro terminal:
-C1:  python3 -m ott 10.0.6.1 --player --ver 1:0
+C1:  python3 -m ott 10.0.6.1 --ver 1:0
 C2:  (igual ao C1)
-S1:  python3 player/Servidor.py videos/movie.Mjpeg   # e noutro terminal:
-S1:  python3 -m ott 10.0.0.1 --servidor
+S1:  python3 -m ott 10.0.0.1 --videos movie
 ```
 
 Pais esperados (`pai para o servidor 1: <vizinho> (custo X)` no log): N1 → 1, N2 → 2, N3 → 2, C1 → 3, C2 → 4.
-
-**Cenário 3.** O bootstrapper corre no PC do N4, na porta 5001:
-
-```
-N4:      sed 's/"port": 5000/"port": 5001/' configs/cenario3.json > /tmp/cenario3-bootstrapper.json
-N4:      python3 -m bootstrapper /tmp/cenario3-bootstrapper.json
-N1 a N6: python3 -m ott 10.0.21.20 --porta 5001
-C1 a C5: python3 player/Cliente.py                                         # e noutro terminal:
-C1 a C5: python3 -m ott 10.0.21.20 --porta 5001 --player --ver 0
-S1, S2:  python3 player/Servidor.py videos/movie.Mjpeg 127.0.0.1 24000     # vídeo 0
-S1, S2:  python3 player/Servidor.py videos/movie2.Mjpeg 127.0.0.1 24001    # vídeo 1
-S1, S2:  python3 -m ott 10.0.21.20 --porta 5001 --servidor --servidor
-```
-
-No log de cada cliente aparece `vídeo 0: servidor 17 (custo X)` (S1) ou `servidor 16` (S2). Quando um servidor para, os clientes dele mostram `vídeo 0: servidor <outro> (custo X), antes <o que parou>`.
 
 ## 3. Perda e atraso com `tc`, à mão
 
@@ -105,6 +108,7 @@ tc filter add dev eth0 parent 1:0 protocol ip u32 match ip dst 10.0.3.20/32 flow
 
 ## 4. Parar, reiniciar e cortar à mão
 
+- **Morrer sem aviso, no próprio terminal:** `Ctrl+\` (o nó morre sem mandar CLOSE; os programas que ele arrancou morrem com ele).
 - **Parar:** `Ctrl+C` no terminal do nó, ou noutro terminal do mesmo nó:
 
   ```bash

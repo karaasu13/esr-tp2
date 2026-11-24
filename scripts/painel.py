@@ -27,7 +27,7 @@ LINHA = re.compile(r"^(\d\d:\d\d:\d\d\.\d{3}) (?:(?!(?:INFO|WARNING|ERROR) )\S+ 
 R_ID = re.compile(r"^\[(\d+)\] ")
 R_PAI = re.compile(r"^\[\d+\] pai para o servidor (\d+): (nenhum|\d+)(?: \(custo ([\d.]+)\))?(?: \((.*)\))?$")
 R_VIDEO = re.compile(r"^\[\d+\] vídeo (\d+): servidor (\d+) \(custo ([\d.]+)\)(?:, antes (\d+))?$")
-R_FLUXO = re.compile(r"^\[\d+\] fluxo \((\d+), (\d+)\): pai=(\S+) destinos=(.*) ativo=(True|False)$")
+R_FLUXO = re.compile(r"^\[\d+\] fluxo \((\d+), (\d+)\): pai=(\S+)(?: custo=\S+)? destinos=(.*) ativo=(True|False)$")
 R_VIZ = re.compile(r"^\[\d+\] tabela de vizinhos: (.*)$")
 R_PING = re.compile(r"^PING (\d+) do vídeo \((\d+), (\d+)\): (.*)$")
 R_BAIXO = re.compile(r"^\[\d+\] vizinho (\d+) em baixo \((.*)\)$")
