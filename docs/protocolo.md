@@ -55,6 +55,8 @@ Cabeçalho fixo de **14 bytes**, ordem de rede (`struct "!BBBHHIHB"`).
 | 0x12 | LEAVE | sim | vazio; fluxo no cabeçalho | gestão de fluxos |
 | 0x13 | WITHDRAW | sim | `{"srv": 1}` | escolha de caminhos |
 | 0x14 | PING | não | `{"n": 12, "caminho": [{"id": 17, "t": 1731245000.123}, …]}` | teste do caminho |
+| 0x15 | SOCORRO | sim | `{}` | pedido do avô (nó com um só vizinho vivo) |
+| 0x16 | AVO | sim | `{"avos": [{"id": 17, "ip": "10.0.20.20", "porta": 5000}]}` | resposta ao SOCORRO, e de novo quando o pai muda |
 | 0x20 | DATA | não | bytes do vídeo | streaming |
 
 Os códigos 0x04 e 0x05 estão livres: eram o HELLO_ACK e o KEEPALIVE, que o HELLO periódico substituiu.
@@ -96,6 +98,29 @@ em vez de parar.
 No encerramento gracioso, o nó envia `CLOSE` fiável aos vizinhos vivos e aguarda os ACKs até
 1 segundo. O recetor remove imediatamente o vizinho e o estado de fluxos associado, e deixa de
 lhe mandar HELLOs; se o aviso se perder, o vizinho é dado como em baixo pelo silêncio.
+
+## Pedido de socorro ao avô
+
+É a única exceção à regra de cada nó só conhecer os vizinhos, autorizada pelo professor. Serve
+para um nó que perde todos os vizinhos de uma vez (ex: um cliente com um só vizinho, no cenário 2).
+O pedido faz-se **antes** da falha, porque depois já não há a quem perguntar.
+
+1. **Em risco = um só vizinho vivo** (verificado de 0,25 em 0,25 s, a partir de 3 s depois do
+   registo, para os vizinhos terem tempo de se apresentar). O nó manda `SOCORRO` a esse vizinho.
+2. O vizinho responde com `AVO`: os seus pais (um por servidor), com o IP e a porta. Esses são os
+   avós de quem pediu. Guarda quem pediu e volta a mandar `AVO` sempre que um pai seu muda.
+3. Quem pediu guarda os avós **só enquanto está em risco**: se voltar a ter 2 vizinhos vivos,
+   esquece-os.
+4. **Sem nenhum vizinho vivo**, o nó apresenta-se a cada avô com HELLOs que levam
+   `"socorro": true`. O avô aceita um HELLO de um nó que não está na sua lista só com esse campo, e a
+   partir daí são vizinhos normais: trocam HELLOs, anúncios, JOIN e vídeo.
+5. Se nem o avô responder, o nó continua a tentar os vizinhos originais e o avô (HELLOs de 5 em 5 s).
+6. **Fim da exceção:** quando um vizinho original está vivo há 6 s (3 rondas de anúncios, para já
+   ter rotas por ele), quem pediu fecha a ligação ao avô com `CLOSE`. Uma ligação de emergência que
+   cai também não se repete: os dois esquecem-se. Só quem pediu fecha; o avô limita-se a aceitar.
+
+O pai só diz quem é o avô a quem lho pede e nunca o espalha; a ligação ao avô serve para refazer
+uma ligação, não para calcular rotas (as rotas continuam a vir dos anúncios).
 
 ## Gestão e encaminhamento de fluxos
 

@@ -42,6 +42,10 @@ R_REINICIO = re.compile(r"^\[\d+\] (?:HELLO repetido de (\d+);|vizinho (\d+) rei
 R_PLAYER_RESUMO = re.compile(r"^player: (?:a sair: )?frame \d+ · recebidos \d+ de \d+ · (em falta .*)$")
 R_PLAYER_PARAGEM = re.compile(r"^player: (\d+) ms sem frame novo \((.*)\)$")
 R_NOSH = re.compile(r"^no\.sh: (.*)$")
+R_AVO = re.compile(r"^\[\d+\] avô guardado \(via (\d+)\): (.*)$")
+R_SOCORRO = re.compile(r"^\[\d+\] sem vizinhos vivos: pede socorro ao avô (\d+)")
+R_ACEITE = re.compile(r"^\[\d+\] pedido de socorro do nó (\d+) .*: aceite como vizinho$")
+R_FIM_EMERG = re.compile(r"^\[\d+\] o vizinho (\d+) voltou: fecha a ligação de emergência ao (\d+)$")
 
 
 @dataclass
@@ -208,6 +212,17 @@ def analisar(fonte: Fonte):
                 outro = m.group(1) or m.group(2)
                 relatos.setdefault(outro, []).append((r.hora, "cima"))
                 acontecimentos.append((r.hora, f"{nm(outro)} reiniciou", ("reiniciou", outro), nome))
+            elif (m := R_AVO.match(t)):
+                via, avos = m.groups()
+                avos = re.sub(r"\b(\d+) \([\d.]+\)", lambda x: nm(x.group(1)), avos)
+                acontecimentos.append((r.hora, f"{nome}: só tem o vizinho {nm(via)}; guarda o avô: {avos}", None, None))
+            elif (m := R_SOCORRO.match(t)):
+                acontecimentos.append((r.hora, f"{nome}: sem vizinhos, pede socorro ao avô {nm(m.group(1))}", None, None))
+            elif (m := R_ACEITE.match(t)):
+                acontecimentos.append((r.hora, f"{nome}: aceita {nm(m.group(1))} como vizinho (socorro)", None, None))
+            elif (m := R_FIM_EMERG.match(t)):
+                volta, avo = m.groups()
+                acontecimentos.append((r.hora, f"{nome}: {nm(volta)} voltou, fecha a ligação de emergência a {nm(avo)}", None, None))
             elif (m := R_NOSH.match(t)):
                 acao = m.group(1)
                 if "Ctrl+C" in acao:

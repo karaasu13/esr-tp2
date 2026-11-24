@@ -1,6 +1,6 @@
 # TP2 ESR — Extras
 
-Atualizado a 23/11/2026 · Grupo: George, Inês, Pedro
+Atualizado a 24/11/2026 · Grupo: George, Inês, Pedro
 
 Um **extra** é algo que o guião não pede. Este documento diz o estado de cada um: feito, por decidir ou tirado. Como funcionam os que estão feitos está no [`protocolo.md`](protocolo.md); aqui só fica o resumo.
 
@@ -36,29 +36,17 @@ Os números entre parênteses são os da lista original, de 3/11.
 | Medições no cliente (21) | A hora de envio vai no timestamp do RTP, em ms; o medidor calcula atraso, jitter, perda e cortes | `player/Medidor.py`, `scripts/analisar_medicoes.py` |
 | PING com a hora em cada salto (23) | Mostra o caminho do vídeo e o tempo de cada salto. Só para testes | `ott/__main__.py` |
 | Comparação com a solução sem overlay (24) | Com 3 clientes, o servidor envia 35% menos com overlay | [`resultados-medicoes.md`](resultados-medicoes.md) |
+| Árvore de cada vídeo, sem os clientes (22) | `python3 scripts/arvore.py` (texto) ou `--png` (figura): segue a tabela de fluxos de cada nó, nos logs, desde o servidor. O painel continua a mostrar o resto (pais, destinos, caminho de cada cliente). Nenhum nó fica a conhecer a árvore: quem a junta é uma ferramenta de teste | `scripts/arvore.py` |
+| Pedido de socorro ao "avô" (33) | *Autorizado pelo professor.* Um nó com um só vizinho vivo pede-lhe o avô (os pais dele); se ficar sem vizinhos, liga-se ao avô, que passa a vizinho normal. Quando um vizinho original volta, a ligação ao avô fecha. Regras e passos em [`protocolo.md`](protocolo.md), "Pedido de socorro ao avô" | `ott/__main__.py`, `tests/test_avo.py` |
+| Perda pelos números em falta | Cada nó numera à parte os pacotes que manda a cada vizinho; quem recebe conta os que faltam nos últimos 200. Usa todos os pacotes (vídeo incluído) e mede só o sentido de lá para cá | `ott/transporte.py` |
+| Leitor do protocolo para o Wireshark (25) | Mostra o cabeçalho pelo nome, o JSON do controlo e o RTP dentro de cada DATA. `wireshark -X lua_script:wireshark/ott.lua captura.pcap` (não corre como root) | `wireshark/ott.lua` |
 
-## Em parte
+## Preparados, por correr no CORE
 
-- **Logs organizados e desenho da árvore (22).** O painel (`scripts/painel.py`) já lê os logs de todos os nós e mostra de quem cada nó recebe, para onde envia e o caminho de cada cliente. Falta, se houver tempo, desenhar a árvore numa figura para o relatório. Nenhum nó fica a conhecer a árvore: quem a junta é uma ferramenta de teste.
+Não mudam o código: são sessões de testes, com o procedimento em [`testes.md`](testes.md), secção 6.
 
-## Por decidir (reunião dos extras)
-
-- **Pedido de socorro ao "avô" (33).** *Autorizado pelo professor.* Resolve o caso em que um nó perde todos os vizinhos de uma vez. O pedido faz-se **antes** da falha, porque depois já não há a quem perguntar:
-  1. Um nó em risco pede ajuda ao pai.
-  2. O pai responde com o número e o endereço do seu próprio pai: o **avô** do nó.
-  3. Se o pai mudar de pai, avisa o nó do avô novo.
-  4. Se o nó perder todos os vizinhos, apresenta-se ao avô. Passam a ser vizinhos normais, e o pedido do vídeo segue por aí.
-  5. Se nem isso resultar, o nó fica isolado e vai tentando de tempos a tempos o avô e os vizinhos originais.
-
-  *Regras, para a exceção ser a menor possível:* é a única situação em que um nó conhece alguém além dos vizinhos; o pai só diz quem é o avô a quem lho pede e nunca o espalha; o nó só guarda o avô enquanto está em risco; quando se liga ao avô, este passa a vizinho normal e a exceção acaba; serve para refazer uma ligação, não para calcular rotas.
-
-  *"Estar em risco"* = ter só um vizinho vivo (a alternativa, "não ter reserva válida", acontece a muitos nós e a exceção passava a ser a regra).
-
-  *Custo:* médio a alto. Obriga a aceitar apresentações de quem não está na lista do bootstrapper. Onde se vê: nos cenários 1 e 2, onde os clientes têm um só vizinho; no cenário 3 quase não acontece (cada cliente tem 2 vizinhos).
-- **Medir a perda pelos números em falta.** Cada nó numera os pacotes que envia a cada vizinho, e o vizinho conta os que faltam. Mede só o sentido do vídeo e usa todos os pacotes, não só os HELLOs. Ajudava no problema das rotas que trocam de pai com 1 a 2% de perda. *Custo:* médio.
-- **Leitor do nosso protocolo para o Wireshark (25).** Mostra os campos do nosso cabeçalho pelo nome. Dá prints claros para a especificação do protocolo. *Custo:* baixo a médio.
-- **Comparar o overlay com o OSPF dos routers.** Desligar um router e ver quem reage primeiro: a rede real ou o overlay. Boa discussão crítica (*Resilient Overlay Networks*). Não muda o código; é uma sessão de testes.
-- **Ligação com largura de banda limitada.** Mostra a cópia única com números: com overlay, uma ligação estreita aguenta vários clientes. Não muda o código.
+- **Comparar o overlay com o OSPF dos routers.** Uma falha silenciosa num router (perda de 100% nas interfaces): quem reage primeiro, o OSPF (que só dá pela falha ao fim do *dead interval*) ou o overlay (300 ms sem vídeo)? Boa discussão crítica (*Resilient Overlay Networks*).
+- **Ligação com largura de banda limitada.** Limitar a saída do S1 a 3 Mbit/s: com 3 clientes, sem overlay não cabe (4 Mbit/s), com overlay cabe (2,6 Mbit/s). Mostra a cópia única com números.
 
 ## Tirados
 

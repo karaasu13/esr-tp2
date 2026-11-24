@@ -34,6 +34,10 @@ HELLO_EM_BAIXO = 5.0  # intervalo para um vizinho que não responde (em baixo ou
 HELLOS_RAPIDOS = 3  # depois de cada mudança de estado, os 3 primeiros HELLOs vão a HELLO_VIVO
 PASSO_HELLO = 0.05
 MAX_ARRANQUE = (1 << 32) - 1
+# Pedido de socorro ao "avô" (a única exceção à regra de só conhecer os vizinhos, autorizada pelo
+# professor). Ver docs/protocolo.md, "Pedido de socorro ao avô".
+ESPERA_RISCO = 3.0  # depois do registo, para os vizinhos terem tempo de se apresentar
+FIM_EMERGENCIA = 6.0  # um vizinho original vivo há isto (3 rondas de anúncios): fecha a emergência
 
 
 @dataclass
@@ -51,6 +55,7 @@ class EstadoVizinho:
     proximo: float = 0.0  # quando enviar o próximo HELLO
     arranque: int | None = None  # nº de arranque visto nos HELLOs dele
     ja_vivo: bool = False  # já esteve vivo (para dizer "voltou" em vez de "ativo")
+    vivo_desde: float = 0.0  # quando passou a vivo pela última vez
 
 
 @dataclass
@@ -106,6 +111,15 @@ class NoOTT:
         # fluxo -> hora do último DATA do pai; só existe depois do 1.º DATA desse pai
         self._ultimo_video: dict[tuple[int, int], float] = {}
         self._em_encerramento = False
+        # Pedido de socorro ao avô
+        self._registado_em = 0.0
+        self._em_risco: int | None = None  # o único vizinho vivo, a quem se pediu o avô
+        self._avos: dict[int, Endereco] = {}  # avô(s), guardados só enquanto o nó está em risco
+        self._socorro_pedido = False  # já se apresentou aos avós desde que ficou sem vizinhos
+        self._protegidos: set[int] = set()  # vizinhos que nos pediram o avô (avisar se mudar)
+        self._emergencia: set[int] = set()  # vizinhos que não vêm do bootstrapper (ligação ao avô)
+        self._avos_ligados: set[int] = set()  # os desses a quem este nó pediu socorro (só este lado
+        # fecha a ligação quando um vizinho original volta; o avô limita-se a aceitar)
 
     @property
     def _confirmados(self) -> set[int]:
@@ -188,6 +202,8 @@ class NoOTT:
                 return
             self._perder_vizinho(origem, "saiu")
             log.info("[%s] vizinho %s avisou que vai sair", self.transporte.id, origem)
+            if origem in self._emergencia:
+                self._esquecer_emergencia(origem)
             return
 
         if tipo == Tipo.ANNOUNCE:
@@ -210,6 +226,14 @@ class NoOTT:
 
         if tipo == Tipo.PING and isinstance(corpo, dict):
             self._receber_ping(origem, fluxo, corpo)
+            return
+
+        if tipo == Tipo.SOCORRO:
+            self._receber_socorro(origem)
+            return
+
+        if tipo == Tipo.AVO and isinstance(corpo, dict):
+            self._receber_avo(origem, corpo)
             return
 
         if tipo == Tipo.DATA and isinstance(corpo, bytes):
@@ -285,6 +309,115 @@ class NoOTT:
             if fluxo[0] == servidor:
                 self.definir_pai(fluxo, pai)
         self._escolher_servidores()
+        for protegido in sorted(self._protegidos & self._confirmados):
+            self._enviar_avos(protegido)  # o avô de quem nos pediu socorro mudou
+
+    # ------------------------------------------------------------ pedido de socorro ao avô
+    def _rever_socorro(self, agora: float) -> None:
+        """Corre de 0,25 em 0,25 s. Um nó com um só vizinho vivo está em risco: pede-lhe o avô.
+        Se ficar sem nenhum, apresenta-se ao avô. Quando um vizinho original volta (e já teve tempo
+        de anunciar rotas), fecha a ligação de emergência e a exceção acaba."""
+        if not self._registado or agora - self._registado_em < ESPERA_RISCO:
+            return
+        vivos = self._confirmados
+        if len(vivos) == 1:
+            (unico,) = vivos
+            self._socorro_pedido = False
+            if self._em_risco != unico:
+                self._em_risco = unico
+                self._avos.clear()
+                log.info("[%s] só um vizinho vivo (%s): pede-lhe o avô", self.transporte.id, unico)
+                self.transporte.send(unico, Tipo.SOCORRO, {}, fiavel=True)
+        elif vivos:
+            self._socorro_pedido = False
+            if self._em_risco is not None:
+                log.info("[%s] já tem %d vizinhos vivos: deixa de guardar o avô",
+                         self.transporte.id, len(vivos))
+                self._em_risco = None
+                self._avos.clear()
+        else:
+            self._em_risco = None
+            if self._avos and not self._socorro_pedido:
+                self._socorro_pedido = True
+                self._pedir_socorro()
+        if self._avos_ligados:
+            originais = [no for no in vivos if no not in self._emergencia
+                         and agora - self._vizinhos_estado[no].vivo_desde >= FIM_EMERGENCIA]
+            if originais:
+                for no in sorted(self._avos_ligados):
+                    log.info("[%s] o vizinho %s voltou: fecha a ligação de emergência ao %s",
+                             self.transporte.id, originais[0], no)
+                    if no in self._confirmados:
+                        self.transporte.send(no, Tipo.CLOSE, {}, fiavel=True)
+                    self._esquecer_emergencia(no)
+
+    def _pedir_socorro(self) -> None:
+        """Sem vizinhos vivos: apresenta-se ao(s) avô(s) com HELLOs que levam "socorro"."""
+        agora = time.monotonic()
+        for avo, endereco in sorted(self._avos.items()):
+            if avo == self.transporte.id or avo in self._vizinhos_configurados:
+                continue  # é ele próprio, ou já é vizinho (então também está em baixo)
+            self._vizinhos_configurados[avo] = endereco
+            self._vizinhos_estado[avo] = EstadoVizinho(proximo=agora)
+            self._emergencia.add(avo)
+            self._avos_ligados.add(avo)
+            self.transporte.set_address(avo, endereco)
+            log.warning("[%s] sem vizinhos vivos: pede socorro ao avô %s (%s)",
+                        self.transporte.id, avo, endereco[0])
+
+    def _esquecer_emergencia(self, no: int) -> None:
+        """Fim de uma ligação de emergência: o nó deixa de ser vizinho (não se tenta de novo)."""
+        self._emergencia.discard(no)
+        self._avos_ligados.discard(no)
+        if no in self.transporte.neighbors:
+            self.transporte.remove_neighbor(no)
+        self._limpar_estado_vizinho(no)
+        self._vizinhos_estado.pop(no, None)
+        self._vizinhos_configurados.pop(no, None)
+        log.info("[%s] ligação de emergência ao %s terminada", self.transporte.id, no)
+
+    def _receber_socorro(self, origem: int) -> None:
+        if origem not in self._confirmados:
+            return
+        self._protegidos.add(origem)
+        self._enviar_avos(origem)
+
+    def _enviar_avos(self, destino: int) -> None:
+        """Diz a quem pediu socorro quem são os pais deste nó (os avôs dele), com o endereço."""
+        avos = []
+        for srv in sorted(self.rotas.servidores):
+            pai = self.rotas.pai(srv)
+            if pai is None or pai == destino or pai in (a["id"] for a in avos):
+                continue
+            endereco = self._vizinhos_configurados.get(pai)
+            if endereco is not None:
+                avos.append({"id": pai, "ip": endereco[0], "porta": endereco[1]})
+        log.info("[%s] o vizinho %s pediu o avô: %s", self.transporte.id, destino,
+                 ", ".join(str(a["id"]) for a in avos) or "ainda não tenho pai")
+        self.transporte.send(destino, Tipo.AVO, {"avos": avos}, fiavel=True)
+
+    def _receber_avo(self, origem: int, corpo: dict) -> None:
+        if origem not in self._confirmados or self._em_risco != origem:
+            return  # só se guarda o avô enquanto se está em risco, e vindo de quem se pediu
+        lista = corpo.get("avos")
+        if not isinstance(lista, list):
+            return
+        avos = {}
+        for a in lista:
+            try:
+                no, ip, porta = a["id"], a["ip"], a["porta"]
+                if (isinstance(no, bool) or not isinstance(no, int) or not 1 <= no <= 65535
+                        or isinstance(porta, bool) or not isinstance(porta, int)
+                        or not 1 <= porta <= 65535):
+                    raise ValueError
+                ipaddress.ip_address(ip)
+            except (KeyError, TypeError, ValueError):
+                log.warning("[%s] AVO inválido de %s: %r", self.transporte.id, origem, a)
+                return
+            avos[no] = (ip, porta)
+        self._avos = avos
+        log.info("[%s] avô guardado (via %s): %s", self.transporte.id, origem,
+                 ", ".join(f"{no} ({ip})" for no, (ip, _p) in sorted(avos.items())) or "nenhum")
 
     def _escolher_servidores(self) -> None:
         """--ver k: pede o vídeo k ao servidor mais barato que o anuncia. Troca de servidor se o
@@ -447,6 +580,7 @@ class NoOTT:
             self._escolher_servidores()  # os custos mudam a cada ronda, mesmo sem mudar o pai
             agora = time.monotonic()
             self._vigiar_video(agora)
+            self._rever_socorro(agora)
             for fluxo, estado in list(self.tabela_fluxos.items()):
                 expirados = [
                     vizinho for vizinho, limite in estado.destinos.items()
@@ -514,6 +648,7 @@ class NoOTT:
             self.transporte.set_id(identificador)
             self._vizinhos_configurados = vizinhos
             self._registado = True
+            self._registado_em = time.monotonic()
             for no, endereco in vizinhos.items():
                 self.transporte.set_address(no, endereco)
                 self._vizinhos_estado[no] = EstadoVizinho()
@@ -545,6 +680,8 @@ class NoOTT:
 
     def _enviar_hello(self, no: int, ev: EstadoVizinho, agora: float) -> None:
         corpo = {"arranque": self.arranque, "intervalo": HELLO_VIVO, "ouvidos": self._ouvidos()}
+        if no in self._avos_ligados:
+            corpo["socorro"] = True  # para o avô aceitar um vizinho que não vem do bootstrapper
         try:
             self.transporte.send(no, Tipo.HELLO, corpo, sonda=True)
         except ValueError:
@@ -579,6 +716,15 @@ class NoOTT:
         return arranque, float(intervalo), ouvidos
 
     def _processar_hello(self, origem: int, corpo: dict | bytes, addr: Endereco) -> None:
+        if (origem not in self._vizinhos_configurados and isinstance(corpo, dict)
+                and corpo.get("socorro") is True and origem not in (0, self.transporte.id)):
+            # Um nó que perdeu todos os vizinhos apresenta-se ao avô: passa a vizinho normal.
+            self._vizinhos_configurados[origem] = addr
+            self._vizinhos_estado[origem] = EstadoVizinho()
+            self._emergencia.add(origem)
+            self.transporte.set_address(origem, addr)
+            log.info("[%s] pedido de socorro do nó %s (%s): aceite como vizinho",
+                     self.transporte.id, origem, addr[0])
         esperado = self._vizinhos_configurados.get(origem)
         ev = self._vizinhos_estado.get(origem)
         if esperado is None or ev is None or addr != esperado:
@@ -612,6 +758,7 @@ class NoOTT:
         if me_ouve:  # ouvem-se os dois: vivo
             voltou = ev.ja_vivo
             ev.estado, ev.ja_vivo, ev.rapidos = "vivo", True, HELLOS_RAPIDOS
+            ev.vivo_desde = agora
             self.transporte.add_neighbor(origem, esperado)
             self.transporte.set_intervalo(origem, intervalo)
             ev.proximo = agora  # responde já: o HELLO dele pode ter vindo antes de ouvir o meu
@@ -639,9 +786,12 @@ class NoOTT:
             ev.proximo = time.monotonic() + HELLO_VIVO
         self._limpar_estado_vizinho(no)
         log.warning("[%s] vizinho %s removido da tabela", self.transporte.id, no)
+        if no in self._emergencia:
+            self._esquecer_emergencia(no)
         self._registar_tabela()
 
     def _limpar_estado_vizinho(self, no: int) -> None:
+        self._protegidos.discard(no)
         for estado in self.tabela_fluxos.values():
             estado.destinos.pop(no, None)
             if estado.pai == no:
