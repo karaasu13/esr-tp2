@@ -6,9 +6,9 @@
 #   ./rede stop               para tudo (antes do Stop do CORE)
 #
 #   ./rede kill N1 [N2 ...]   kill -9: o nó morre sem avisar (falha a sério)
-#   ./rede down N1 [N2 ...]   Ctrl+C: o nó sai e avisa os vizinhos (CLOSE)
+#   ./rede down N1 [N2 ...]   kill (SIGTERM): o nó sai e avisa os vizinhos (CLOSE)
 #   ./rede up N1 [N2 ...]     volta a arrancar o nó, com o mesmo comando do arranque
-#   ./rede restart N1         Ctrl+C e arranca de novo (restart N1 -9: com kill -9)
+#   ./rede restart N1         sai a avisar e arranca de novo (restart N1 -9: com kill -9)
 #
 #   ./rede cut C1 N1          corta a ligação C1–N1 (100% de perda nos dois sentidos)
 #   ./rede loss C1 N1 2%      perda na ligação C1–N1

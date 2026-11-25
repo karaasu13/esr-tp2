@@ -7,6 +7,9 @@ import ipaddress
 import logging
 import os
 import random
+import signal
+import socket
+import sys
 from dataclasses import dataclass, field
 import time
 from typing import Sequence
@@ -15,6 +18,7 @@ from .protocolo import PORTA, Tipo, nome_tipo
 from . import rotas as modulo_rotas
 from .rotas import Rotas, melhor_pela_margem
 from .transporte import Endereco, Transporte
+from .locais import ProgramasLocais, ficheiro_video
 from .video import LOCALHOST, PORTA_PLAYER, PORTA_SERVIDOR, PontaVideo
 
 log = logging.getLogger("ott")
@@ -687,8 +691,16 @@ class NoOTT:
                  ", ".join(vizinhos) if vizinhos else "(vazia)")
         for fluxo, estado in sorted(self.tabela_fluxos.items()):
             destinos = ", ".join(str(no) for no in sorted(estado.destinos)) or "(nenhum)"
-            log.info("[%s] fluxo %s: pai=%s destinos=%s ativo=%s",
-                     self.transporte.id, fluxo, estado.pai, destinos, estado.ativo)
+            log.info("[%s] fluxo %s: pai=%s custo=%s destinos=%s ativo=%s",
+                     self.transporte.id, fluxo, estado.pai, self._custo_texto(fluxo), destinos,
+                     estado.ativo)
+
+    def _custo_texto(self, fluxo: tuple[int, int]) -> str:
+        """Custo até ao servidor do fluxo, como está agora (0 no próprio servidor)."""
+        if self._servidor_local(fluxo):
+            return "0"
+        rota = self.rotas.rota(fluxo[0])
+        return "-" if rota is None else f"{rota.custo:.1f}"
 
 
 def portas_servidor(pedidas: Sequence[int | None]) -> list[int]:
@@ -706,59 +718,141 @@ def portas_servidor(pedidas: Sequence[int | None]) -> list[int]:
     return portas
 
 
+def endereco_bootstrapper(texto: str, porta: int) -> tuple[str, int]:
+    """`10.0.21.20` ou `10.0.21.20:5001` (a porta no endereço ganha à de --porta)."""
+    if texto.count(":") == 1:  # IPv4:porta (um IPv6 tem vários ':')
+        texto, porta_texto = texto.split(":")
+        porta = int(porta_texto)
+    ipaddress.ip_address(texto)
+    if not 1 <= porta <= 65535:
+        raise ValueError("as portas têm de estar entre 1 e 65535")
+    return texto, porta
+
+
+def nome_do_no() -> str:
+    """Nome que aparece em cada linha do log: OTT_NOME, ou o nome da máquina (no CORE, o do nó)."""
+    nome = os.environ.get("OTT_NOME") or socket.gethostname()
+    return nome.replace("%", "").strip()
+
+
+COMANDOS_SAIR = ("sair", "q")
+
+
+async def correr(no: NoOTT, videos: list, abrir_player: bool, nome: str) -> None:
+    """Arranca o nó e, depois do registo, os programas locais (servidores de vídeo e player).
+
+    Duas formas de fechar o nó:
+    * Ctrl+C (SIGINT): o nó morre logo, sem avisar ninguém, como numa falha (pedido do professor).
+      Os vizinhos dão por isso pela falta de vídeo ou pelo silêncio dos HELLOs.
+    * 'sair' + Enter no terminal do nó, ou `kill <pid>` (SIGTERM): saída avisada, com CLOSE.
+    Os programas que o nó arrancou morrem com ele nos dois casos (ver ott/locais.py)."""
+    loop = asyncio.get_running_loop()
+    sair = asyncio.Event()
+
+    def falhar() -> None:
+        log.warning("Ctrl+C: o nó termina já, sem avisar os vizinhos (como uma falha)")
+        logging.shutdown()
+        os._exit(130)
+
+    def ler_comando() -> None:
+        linha = sys.stdin.readline()
+        if not linha:  # o terminal fechou: deixa de ler
+            loop.remove_reader(sys.stdin.fileno())
+        elif linha.strip().lower() in COMANDOS_SAIR:
+            sair.set()
+        elif linha.strip():
+            log.info("comando desconhecido: %r (para sair a avisar os vizinhos: 'sair')",
+                     linha.strip())
+
+    loop.add_signal_handler(signal.SIGINT, falhar)
+    loop.add_signal_handler(signal.SIGTERM, sair.set)
+    if sys.stdin.isatty():
+        loop.add_reader(sys.stdin.fileno(), ler_comando)
+    locais = ProgramasLocais(nome)
+    try:
+        await no.start()
+        if videos:
+            await locais.servidores(videos)
+        if abrir_player:
+            await locais.player(no.transporte.id)
+        log.info("para sair avisando os vizinhos: 'sair' + Enter; Ctrl+C mata o nó sem avisar")
+        await sair.wait()
+        log.info("a sair: avisa os vizinhos (CLOSE)")
+    finally:
+        await locais.fechar()
+        await no.shutdown()
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Arranca um nó OTT e regista-o no bootstrapper")
-    parser.add_argument("ip_bootstrapper", help="IP do bootstrapper")
-    parser.add_argument("--porta", type=int, default=PORTA, help=f"porta UDP do bootstrapper (predefinição: {PORTA})")
+    parser = argparse.ArgumentParser(
+        description="Arranca um nó OTT e regista-o no bootstrapper",
+        epilog="Exemplos (cenário 3): 'python3 -m ott 10.0.21.20:5001' (nó intermédio); "
+               "'... --videos movie movie2' (servidor); '... --ver 0' (cliente, abre o player).")
+    parser.add_argument("ip_bootstrapper", help="IP do bootstrapper, opcionalmente com a porta "
+                        "(ex: 10.0.21.20:5001)")
+    parser.add_argument("--porta", type=int, default=PORTA, help=f"porta UDP do bootstrapper "
+                        f"(predefinição: {PORTA})")
     parser.add_argument("--porta-local", type=int, default=PORTA,
                         help=f"porta UDP local (predefinição: {PORTA})")
+    parser.add_argument("--videos", nargs="+", default=[], metavar="VIDEO",
+                        help="este nó é servidor: arranca um Servidor.py por vídeo (ex: movie "
+                             "movie2, procurados na pasta videos/); o k-ésimo é o vídeo k")
     parser.add_argument("--servidor", type=int, action="append", metavar="PORTA", nargs="?",
                         const=None, default=[],
-                        help="este nó tem servidor(es) local(is): escuta o Servidor.py em localhost "
-                             f"nesta porta (sem valor: {PORTA_SERVIDOR} + k para o vídeo k); repetir "
-                             "para mais vídeos (o k-ésimo é o vídeo k)")
+                        help="este nó tem servidor(es) local(is) já a correr: escuta o Servidor.py "
+                             f"em localhost nesta porta (sem valor: {PORTA_SERVIDOR} + k para o "
+                             "vídeo k); repetir para mais vídeos (o k-ésimo é o vídeo k)")
     parser.add_argument("--player", type=int, nargs="?", const=PORTA_PLAYER, default=None,
                         metavar="PORTA",
-                        help=f"entrega o vídeo ao player em localhost (sem valor: {PORTA_PLAYER})")
+                        help="entrega o vídeo a um player já aberto em localhost, sem abrir outro "
+                             f"(sem valor: {PORTA_PLAYER})")
     parser.add_argument("--ver", action="append", default=[], metavar="[SERVIDOR:]VIDEO",
-                        help="vídeo a pedir e entregar ao player: 'k' ao servidor mais barato, "
-                             "'servidor:k' a esse servidor; ex: 0 ou 1:0")
+                        help="vídeo a pedir e mostrar: 'k' ao servidor mais barato, "
+                             "'servidor:k' a esse servidor; ex: 0 ou 1:0. Sem --player, o nó abre "
+                             "o player sozinho")
     args = parser.parse_args()
     try:
-        ipaddress.ip_address(args.ip_bootstrapper)
-        if not 1 <= args.porta <= 65535 or not 1 <= args.porta_local <= 65535:
+        ip_boot, porta_boot = endereco_bootstrapper(args.ip_bootstrapper, args.porta)
+        if not 1 <= args.porta_local <= 65535:
             parser.error("as portas têm de estar entre 1 e 65535")
-        args.servidor = portas_servidor(args.servidor)
+        if args.videos and args.servidor:
+            parser.error("usar --videos (o nó arranca os servidores) ou --servidor (já a correr), "
+                         "não os dois")
+        videos = [ficheiro_video(v) for v in args.videos]
+        args.servidor = portas_servidor([None] * len(videos) if videos else args.servidor)
     except ValueError as exc:
         parser.error(str(exc))
 
-    # OTT_NOME (posto pelos scripts do CORE) põe o nome do nó em cada linha do log.
-    nome = os.environ.get("OTT_NOME", "").replace("%", "").strip()
+    # O nome do nó vai em cada linha do log (no CORE, o nome da máquina é o do nó: N1, C1, ...).
+    nome = nome_do_no()
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s.%(msecs)03d " + (f"{nome} " if nome else "") + "%(levelname)s %(message)s",
         datefmt="%H:%M:%S",
     )
     try:
-        fluxos, videos = set(), set()
+        fluxos, videos_pedidos = set(), set()
         for v in args.ver:
             if ":" not in v:
                 video = int(v)
                 if not 0 <= video <= 255:
                     raise ValueError(f"vídeo inválido: {v}")
-                videos.add(video)
+                videos_pedidos.add(video)
                 continue
             servidor, stream = v.split(":")
             fluxo = (int(servidor), int(stream))
             NoOTT._validar_fluxo(fluxo)
             fluxos.add(fluxo)
-        no = NoOTT(args.ip_bootstrapper, porta_bootstrapper=args.porta, porta=args.porta_local,
+        abrir_player = bool(args.ver) and args.player is None
+        porta_player = PORTA_PLAYER if abrir_player else args.player
+        no = NoOTT(ip_boot, porta_bootstrapper=porta_boot, porta=args.porta_local,
                    portas_servidor=args.servidor,
-                   player=None if args.player is None else (LOCALHOST, args.player))
+                   player=None if porta_player is None else (LOCALHOST, porta_player))
         no.fluxos_player = fluxos
-        no.videos_pedidos = videos
-        asyncio.run(no.run())
-    except KeyboardInterrupt:
+        no.videos_pedidos = videos_pedidos
+        asyncio.run(correr(no, videos, abrir_player, nome))
+        log.info("nó OTT terminado")
+    except KeyboardInterrupt:  # Ctrl+C antes de o ciclo do nó arrancar
         log.info("nó OTT terminado")
     except (OSError, RuntimeError, ValueError) as exc:
         parser.exit(1, f"Erro: {exc}\n")

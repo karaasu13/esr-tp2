@@ -106,7 +106,7 @@ class _ParaAoFimDe:
     def wait(self, _timeout: float) -> bool:
         return False
 
-    def isSet(self) -> bool:
+    def is_set(self) -> bool:
         return len(self.sock.enviados) >= self.n
 
 

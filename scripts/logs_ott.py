@@ -23,7 +23,7 @@ LINHA = re.compile(r"^(\d\d:\d\d:\d\d\.\d{3}) (?:(?!(?:INFO|WARNING|ERROR) )\S+ 
 R_ID = re.compile(r"^\[(\d+)\] ")
 R_PAI = re.compile(r"^\[\d+\] pai para o servidor (\d+): (nenhum|\d+)(?: \(custo ([\d.]+)\))?(?: \((.*)\))?$")
 R_VIDEO = re.compile(r"^\[\d+\] vídeo (\d+): servidor (\d+) \(custo ([\d.]+)\)(?:, antes (\d+))?$")
-R_FLUXO = re.compile(r"^\[\d+\] fluxo \((\d+), (\d+)\): pai=(\S+) destinos=(.*) ativo=(True|False)$")
+R_FLUXO = re.compile(r"^\[\d+\] fluxo \((\d+), (\d+)\): pai=(\S+)(?: custo=\S+)? destinos=(.*) ativo=(True|False)$")
 R_VIZ = re.compile(r"^\[\d+\] tabela de vizinhos: (.*)$")
 R_PING = re.compile(r"^PING (\d+) do vídeo \((\d+), (\d+)\): (.*)$")
 R_SALTO = re.compile(r"(\d+)(?: \(\+([\d.]+) ms\))?")
@@ -39,7 +39,7 @@ R_ARRANQUE = re.compile(r"^\[0\] à escuta em ")
 
 # Estados de um nó, do melhor para o pior
 ATIVO, A_ARRANCAR, SEM_SINAL, PARADO, MORTO, TERMINOU, ERRO = (
-    "ativo", "a arrancar", "sem sinal", "parado (Ctrl+C)", "morto (kill -9)", "terminou", "erro")
+    "ativo", "a arrancar", "sem sinal", "parado (CLOSE)", "morto (kill -9)", "terminou", "erro")
 EM_BAIXO = {SEM_SINAL, PARADO, MORTO, TERMINOU, ERRO}
 
 # Tipos de acontecimento (o painel dá uma cor a cada um)
@@ -263,7 +263,7 @@ def analisar(cenario: str, ate: str | None = None) -> Estado:
                 eventos.append((r.hora, f"{nm(outro)} reiniciou", RECUPERA, ("reiniciou", outro), nome))
             elif (m := R_NOSH.match(t)):
                 acao = m.group(1)
-                if "Ctrl+C" in acao:
+                if "parado" in acao:  # no.sh parar: saída avisada (CLOSE)
                     no.estado = PARADO
                 elif "kill -9" in acao:
                     no.estado = MORTO
