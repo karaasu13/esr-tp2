@@ -10,8 +10,8 @@
 # Os programas correm sem janela e o que escrevem fica em logs/cenarioN-<nó>[-<programa>].log,
 # com o nome do nó em cada linha. Abrem-se só as janelas dos players (com o nome do nó no título)
 # e um painel com o estado de todos os nós (scripts/painel.py).
-# Para mexer num nó (parar, matar, piorar ou cortar uma ligação): scripts/no.sh.
-# Para parar tudo: sudo bash scripts/no.sh parar-tudo, e depois o Stop do CORE.
+# Para mexer num nó (parar, matar, piorar ou cortar uma ligação): ./rede (ou scripts/no.sh).
+# Para parar tudo: ./rede stop, e depois o Stop do CORE.
 #
 # Modo de medição (docs/testes.md, secção 5): em vez dos players, os clientes correm o
 # player/Medidor.py, o S1 mede o tráfego da eth0, e no fim o script para os medidores e mostra a
@@ -185,7 +185,7 @@ esperar_rede() {
 
 abrir_painel() {
   if command -v xterm >/dev/null; then
-    xterm -fa Monospace -fs 10 -geometry 150x50 -T "Painel do cenário $CENARIO" \
+    xterm -fa Monospace -fs 10 -geometry 160x56 -T "Painel do cenário $CENARIO" \
       -e python3 "$PROJ/scripts/painel.py" "$CENARIO" &
     echo "Abri o painel. Se o fechares: python3 scripts/painel.py $CENARIO"
   else
@@ -206,6 +206,7 @@ normal)
   arrancar_servidores
   echo
   echo "Tudo arrancado. Os logs ficam em logs/cenario$CENARIO-*.log"
+  echo "Para mexer nos nós e nas ligações: ./rede kill N1, ./rede cut C1 N1, ... (./rede help)"
   abrir_painel
   exit 0
   ;;

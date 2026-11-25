@@ -28,6 +28,10 @@ RENOVACAO_JOIN = 2.0
 VALIDADE_DESTINO = 6.0
 PERIODO_PING = 5.0
 SEM_VIDEO = 0.3  # s sem DATA do pai num fluxo ativo (6 frames a 20 por segundo): procurar outro pai
+# s que um pai novo tem para começar a enviar, depois de uma troca num fluxo que já tinha vídeo. Se
+# não enviar (ex: também recebia através do nó que falhou), procura-se outro pai. Chega para o JOIN
+# subir alguns saltos e o vídeo descer, mesmo com centenas de ms de atraso por ligação.
+PRAZO_PAI_NOVO = 1.0
 # HELLO periódico, que faz de apresentação, de sinal de vida e de nova tentativa de ligação
 # (como o Hello do OSPF e os pacotes do BFD). Ver docs/protocolo.md.
 HELLO_VIVO = 1.0  # intervalo para um vizinho vivo; é também o que cada nó anuncia no HELLO
@@ -111,6 +115,11 @@ class NoOTT:
         self._ultima_renovacao: dict[tuple[int, int], float] = {}
         # fluxo -> hora do último DATA do pai; só existe depois do 1.º DATA desse pai
         self._ultimo_video: dict[tuple[int, int], float] = {}
+        # Fluxos que já tiveram vídeo e trocaram de pai: fluxo -> quando se pediu o vídeo ao pai
+        # novo, até chegar o 1.º DATA dele. Só se vigia um pai novo em fluxos que já tiveram
+        # vídeo: assim, enquanto um servidor ainda não envia nada, os nós não andam a trocar.
+        self._teve_video: set[tuple[int, int]] = set()
+        self._pai_novo_desde: dict[tuple[int, int], float] = {}
         self._em_encerramento = False
         # Pedido de socorro ao avô
         self._registado_em = 0.0
@@ -218,7 +227,7 @@ class NoOTT:
             return
 
         if tipo == Tipo.JOIN:
-            self._receber_join(origem, fluxo)
+            self._receber_join(origem, fluxo, corpo)
             return
 
         if tipo == Tipo.LEAVE:
@@ -290,9 +299,15 @@ class NoOTT:
         if anterior is not None and self._ativo(fluxo) and anterior in self.transporte.neighbors:
             self.transporte.send(anterior, Tipo.LEAVE, {}, fiavel=True, fluxo=fluxo)
         estado.pai = pai
-        self._ultimo_video.pop(fluxo, None)  # o pai novo ainda não enviou vídeo: não vigiar já
+        # Troca num fluxo que já tinha vídeo (ou que já estava à espera de um pai novo): o pai
+        # novo tem PRAZO_PAI_NOVO para começar a enviar, e o JOIN leva a marca "recuperar".
+        vigiar = fluxo in self._teve_video or fluxo in self._pai_novo_desde
+        self._ultimo_video.pop(fluxo, None)  # o pai novo ainda não enviou vídeo
+        self._pai_novo_desde.pop(fluxo, None)
         if pai is not None and self._registado and self._ativo(fluxo) and not self._servidor_local(fluxo):
-            self._enviar_join(fluxo, pai, fiavel=True)
+            self._enviar_join(fluxo, pai, fiavel=True, recuperar=vigiar)
+            if vigiar:
+                self._pai_novo_desde[fluxo] = time.monotonic()
         self._registar_tabela()
 
     @staticmethod
@@ -476,7 +491,7 @@ class NoOTT:
             and 0 <= fluxo[1] < len(self.video.portas_pedidas)
         )
 
-    def _receber_join(self, origem: int, fluxo: tuple[int, int]) -> None:
+    def _receber_join(self, origem: int, fluxo: tuple[int, int], corpo: object = None) -> None:
         if origem not in self._confirmados or origem == self._pai(fluxo):
             log.warning("[%s] JOIN inválido de %s para %s", self.transporte.id, origem, fluxo)
             return
@@ -489,8 +504,15 @@ class NoOTT:
         estado = self._estado_fluxo(fluxo)
         ja_ativo = self._ativo(fluxo)
         estado.destinos[origem] = time.monotonic() + VALIDADE_DESTINO
+        # "recuperar": quem pede perdeu o vídeo e escolheu-nos como pai novo. Se também não o
+        # estamos a receber, o nosso pai pode depender do mesmo nó que falhou: damos-lhe
+        # PRAZO_PAI_NOVO para enviar, e o pedido sobe com a mesma marca.
+        recuperar = (isinstance(corpo, dict) and corpo.get("recuperar") is True
+                     and not self._servidor_local(fluxo) and fluxo not in self._ultimo_video)
+        if recuperar:
+            self._pai_novo_desde.setdefault(fluxo, time.monotonic())
         if not ja_ativo:
-            self._propagar_estado_fluxo(fluxo)
+            self._propagar_estado_fluxo(fluxo, recuperar=recuperar)
         self._registar_tabela()
 
     def _receber_leave(self, origem: int, fluxo: tuple[int, int]) -> None:
@@ -501,18 +523,19 @@ class NoOTT:
         self._propagar_estado_fluxo(fluxo)
         self._registar_tabela()
 
-    def _propagar_estado_fluxo(self, fluxo: tuple[int, int]) -> None:
+    def _propagar_estado_fluxo(self, fluxo: tuple[int, int], recuperar: bool = False) -> None:
         pai = self._pai(fluxo)
         if pai is None or not self._registado or self._servidor_local(fluxo):
             return
         if self._ativo(fluxo):
-            self._enviar_join(fluxo, pai, fiavel=True)
+            self._enviar_join(fluxo, pai, fiavel=True, recuperar=recuperar)
         elif pai in self.transporte.neighbors:
             self.transporte.send(pai, Tipo.LEAVE, {}, fiavel=True, fluxo=fluxo)
             self._ultima_renovacao.pop(fluxo, None)
 
-    def _enviar_join(self, fluxo: tuple[int, int], pai: int, *, fiavel: bool) -> None:
-        self.transporte.send(pai, Tipo.JOIN, {}, fiavel=fiavel, fluxo=fluxo)
+    def _enviar_join(self, fluxo: tuple[int, int], pai: int, *, fiavel: bool, recuperar: bool = False) -> None:
+        corpo = {"recuperar": True} if recuperar else {}
+        self.transporte.send(pai, Tipo.JOIN, corpo, fiavel=fiavel, fluxo=fluxo)
         self._ultima_renovacao[fluxo] = time.monotonic()
 
     def _receber_video(self, origem: int, fluxo: tuple[int, int], rtp: bytes) -> None:
@@ -521,16 +544,26 @@ class NoOTT:
                       origem, fluxo)
             return
         self._ultimo_video[fluxo] = time.monotonic()
+        self._teve_video.add(fluxo)
+        self._pai_novo_desde.pop(fluxo, None)
         self._distribuir_video(fluxo, rtp)
 
     def _vigiar_video(self, agora: float) -> None:
-        """Fluxo ativo sem DATA do pai há mais de SEM_VIDEO: troca de pai, se houver viável."""
+        """Fluxo ativo sem DATA do pai há mais de SEM_VIDEO, ou sem o 1.º DATA de um pai novo ao
+        fim de PRAZO_PAI_NOVO: troca de pai, se houver viável. Sem vizinho viável fica com o pai
+        e tenta outra vez na volta seguinte."""
         for fluxo, ultimo in list(self._ultimo_video.items()):
             if not self._ativo(fluxo) or self._pai(fluxo) is None:
                 self._ultimo_video.pop(fluxo, None)  # volta a vigiar depois do próximo DATA
+                self._teve_video.discard(fluxo)
             elif agora - ultimo > SEM_VIDEO:
-                # Sem vizinho viável fica com o pai e tenta outra vez na volta seguinte.
                 self.rotas.pai_sem_video(fluxo[0], agora - ultimo)
+        for fluxo, desde in list(self._pai_novo_desde.items()):
+            if not self._ativo(fluxo) or self._pai(fluxo) is None:
+                self._pai_novo_desde.pop(fluxo, None)
+                self._teve_video.discard(fluxo)
+            elif agora - desde > PRAZO_PAI_NOVO:
+                self.rotas.pai_sem_video(fluxo[0], agora - desde)
 
     def _receber_ping(self, origem: int, fluxo: tuple[int, int], corpo: dict) -> None:
         if origem != self._pai(fluxo) or not self._ativo(fluxo):

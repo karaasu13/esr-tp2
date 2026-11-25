@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Painel do cenário: lê os logs dos nós e mostra, de 2 em 2 s, o estado de cada nó, o caminho de
-cada cliente e os últimos acontecimentos, sempre com os nomes dos nós.
+"""Painel do cenário: lê os logs dos nós e mostra, de 2 em 2 s, por onde passa cada vídeo (a
+árvore), o que cada cliente está a ver, o estado de cada nó e os últimos acontecimentos, sempre
+com os nomes dos nós. Os logs são os do script (logs/cenarioN-*.log) ou, se forem mais recentes,
+os dos nós arrancados à mão (logs/core-<sessão>/), que cada nó escreve sozinho.
 
-    python3 scripts/painel.py              # nós arrancados à mão: a sessão do CORE mais recente
-                                           # (logs/core-<sessão>/, escritos pelos próprios nós)
-    python3 scripts/painel.py 3            # cenário 3 arrancado pelo script (logs/cenario3-*.log)
-    python3 scripts/painel.py --pasta DIR  # os logs de uma pasta (<nó>.log, <nó>-player.log)
-    ... --uma-vez                          # mostra uma vez e sai
-
-Corre no PC, fora do CORE, e pode abrir-se a qualquer altura: relê os logs desde o início.
+    python3 scripts/painel.py                  # cenário que está a correr; atualiza sozinho (Ctrl+C sai)
+    python3 scripts/painel.py 3                # cenário 3
+    python3 scripts/painel.py 3 --uma-vez      # mostra uma vez e sai (bom para prints)
+    python3 scripts/painel.py 3 --hora 16:05:30   # como estava a rede a essa hora
+    python3 scripts/painel.py 3 --sem-cor      # sem cores (ex: para guardar num ficheiro)
 
 Só lê os ficheiros de log: não fala com os nós e não precisa de sudo. É uma ferramenta de
 teste, que corre fora do overlay: nenhum nó fica a conhecer a árvore por causa dela.
@@ -19,358 +19,243 @@ import re
 import shutil
 import sys
 import time
-from dataclasses import dataclass, field
-from pathlib import Path
 
-LOGS = Path(__file__).resolve().parent.parent / "logs"
-SUFIXOS = {"player", "bootstrapper", "medidor", "debito"}  # e "video", "video0", "video1", ...
+import logs_ott as L
+
 ATUALIZAR_S = 2
-N_ACONTECIMENTOS = 16
-JUNTAR_S = 2.0  # avisos iguais de vizinhos diferentes, com menos do que isto, ficam numa linha
+LARGURA_DUAS_COLUNAS = 120  # abaixo disto, as árvores e os clientes ficam um por baixo do outro
 
-LINHA = re.compile(r"^(\d\d:\d\d:\d\d\.\d{3}) (?:(?!(?:INFO|WARNING|ERROR) )\S+ )?(INFO|WARNING|ERROR) (.*)$")
-R_ID = re.compile(r"^\[(\d+)\] ")
-R_PAI = re.compile(r"^\[\d+\] pai para o servidor (\d+): (nenhum|\d+)(?: \(custo ([\d.]+)\))?(?: \((.*)\))?$")
-R_VIDEO = re.compile(r"^\[\d+\] vídeo (\d+): servidor (\d+) \(custo ([\d.]+)\)(?:, antes (\d+))?$")
-R_FLUXO = re.compile(r"^\[\d+\] fluxo \((\d+), (\d+)\): pai=(\S+)(?: custo=\S+)? destinos=(.*) ativo=(True|False)$")
-R_VIZ = re.compile(r"^\[\d+\] tabela de vizinhos: (.*)$")
-R_PING = re.compile(r"^PING (\d+) do vídeo \((\d+), (\d+)\): (.*)$")
-R_BAIXO = re.compile(r"^\[\d+\] vizinho (\d+) em baixo \((.*)\)$")
-R_SAIU = re.compile(r"^\[\d+\] vizinho (\d+) avisou que vai sair$")
-R_VOLTOU = re.compile(r"^\[\d+\] vizinho (\d+) (?:voltou|ativo)$")
-R_REINICIO = re.compile(r"^\[\d+\] (?:HELLO repetido de (\d+);|vizinho (\d+) reiniciou)")
-R_PLAYER_RESUMO = re.compile(r"^player: (?:a sair: )?frame \d+ · recebidos \d+ de \d+ · (em falta .*)$")
-R_PLAYER_PARAGEM = re.compile(r"^player: (\d+) ms sem frame novo \((.*)\)$")
-R_NOSH = re.compile(r"^no\.sh: (.*)$")
-R_AVO = re.compile(r"^\[\d+\] avô guardado \(via (\d+)\): (.*)$")
-R_SOCORRO = re.compile(r"^\[\d+\] sem vizinhos vivos: pede socorro ao avô (\d+)")
-R_ACEITE = re.compile(r"^\[\d+\] pedido de socorro do nó (\d+) .*: aceite como vizinho$")
-R_FIM_EMERG = re.compile(r"^\[\d+\] o vizinho (\d+) voltou: fecha a ligação de emergência ao (\d+)$")
+ESTILOS = {"negrito": "1", "fraco": "2", "invertido": "7", "vermelho": "31", "verde": "32",
+           "amarelo": "33", "azul": "34", "magenta": "35", "ciano": "36", "cinza": "90"}
+ANSI = re.compile(r"\033\[[0-9;?]*[A-Za-z]")
+
+SIMBOLO = {L.ATIVO: ("●", "verde"), L.A_ARRANCAR: ("◌", "amarelo"), L.SEM_SINAL: ("✖", "vermelho"),
+           L.MORTO: ("✖", "vermelho"), L.ERRO: ("✖", "vermelho"), L.PARADO: ("■", "cinza"),
+           L.TERMINOU: ("■", "cinza")}
+TIPO = {L.FALHA: ("✖", "vermelho"), L.RECUPERA: ("↻", "verde"), L.ACAO: ("»", "ciano"),
+        L.VIDEO: ("▶", "magenta"), L.ERRO_EV: ("!", "vermelho")}
 
 
-@dataclass
-class Registo:
-    hora: str
-    nivel: str
-    texto: str
+class Tinta:
+    """Põe cores ANSI no texto (ou não, se a saída não for um terminal ou com --sem-cor)."""
+    def __init__(self, ativa: bool):
+        self.ativa = ativa
+
+    def __call__(self, texto: str, *estilos: str) -> str:
+        if not self.ativa or not estilos:
+            return texto
+        return f"\033[{';'.join(ESTILOS[e] for e in estilos)}m{texto}\033[0m"
 
 
-@dataclass
-class No:
-    nome: str
-    id: str = ""
-    estado: str = "a arrancar"
-    ultima_hora: str = ""
-    pais: dict = field(default_factory=dict)      # servidor -> (pai ou None, custo)
-    videos: dict = field(default_factory=dict)    # vídeo -> (servidor, custo)
-    fluxos: dict = field(default_factory=dict)    # (servidor, vídeo) -> (destinos, ativo)
-    vizinhos: list = field(default_factory=list)
-    ping: tuple | None = None                     # (hora, [ids], servidor, vídeo)
-    cliente: bool = False
-    player: str = ""
-    paragem: str = ""
+def visivel(texto: str) -> int:
+    return len(ANSI.sub("", texto))
 
 
-def ordem(nome: str):
-    m = re.match(r"([A-Za-z]+)(\d*)", nome)
-    letra, num = (m.group(1), int(m.group(2) or 0)) if m else (nome, 0)
-    return ({"S": 0, "N": 1, "C": 2}.get(letra[:1], 3), letra, num)
-
-
-def ler(ficheiro: Path) -> list[Registo]:
-    registos, ultima = [], "00:00:00.000"
-    try:
-        texto = ficheiro.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return registos
-    for linha in texto.splitlines():
-        m = LINHA.match(linha)
+def ajustar(texto: str, largura: int) -> str:
+    """Corta ou completa com espaços até `largura` caracteres visíveis (sem estragar as cores)."""
+    saida, n, i = [], 0, 0
+    while i < len(texto) and n < largura:
+        m = ANSI.match(texto, i)
         if m:
-            ultima = m.group(1)
-            registos.append(Registo(m.group(1), m.group(2), m.group(3)))
-        elif linha.startswith("Traceback"):
-            registos.append(Registo(ultima, "ERROR", "erro no programa (Traceback no log)"))
-    return registos
-
-
-@dataclass
-class Fonte:
-    """De onde vêm os logs: os do script (cenario) ou uma pasta de uma sessão à mão (pasta)."""
-    cenario: str = ""
-    pasta: Path | None = None
-
-    def ficheiros(self):
-        if self.pasta is not None:  # logs/core-1/C1-player.log -> ["C1", "player"]
-            return [(f, f.stem.split("-")) for f in sorted(self.pasta.glob("*.log"))]
-        # logs/cenario3-C1-player.log -> ["C1", "player"]
-        return [(f, f.stem.split("-")[1:]) for f in sorted(LOGS.glob(f"cenario{self.cenario}-*.log"))]
-
-    def descricao(self) -> str:
-        if self.pasta is not None:
-            try:
-                return f"Sessão {self.pasta.name} · lido de {self.pasta.relative_to(LOGS.parent)}/"
-            except ValueError:
-                return f"Lido de {self.pasta}/"
-        return f"Cenário {self.cenario} · lido de logs/cenario{self.cenario}-*.log"
-
-
-def sessao_mais_recente() -> Path | None:
-    """A pasta logs/core-<sessão> mais recente (cada nó arrancado à mão escreve lá o seu log)."""
-    pastas = [p for p in LOGS.glob("core-*") if p.is_dir()]
-    return max(pastas, key=lambda p: p.stat().st_mtime) if pastas else None
-
-
-def carregar(fonte: Fonte):
-    """Lê os logs: {nó: registos do nó overlay} e {nó: registos do player}."""
-    principais, players = {}, {}
-    for f, partes in fonte.ficheiros():
-        if not partes or not partes[0]:
+            saida.append(m.group())
+            i = m.end()
             continue
-        nome, sufixo = partes[0], (partes[1] if len(partes) > 1 else "")
-        if sufixo == "player":
-            players[nome] = ler(f)
-        elif sufixo not in SUFIXOS and not sufixo.startswith("video"):
-            principais[nome] = ler(f)
-    return principais, players
+        if n == largura - 1 and visivel(texto[i:]) > 1:
+            saida.append("…")
+            n += 1
+            break
+        saida.append(texto[i])
+        n += 1
+        i += 1
+    resto = "".join(saida)
+    if "\033[" in resto:
+        resto += "\033[0m"
+    return resto + " " * (largura - n)
 
 
-def analisar(fonte: Fonte):
-    principais, players = carregar(fonte)
-    nos = {nome: No(nome) for nome in principais}
-    for nome, regs in principais.items():
-        for r in regs:
-            m = R_ID.match(r.texto)
-            if m and m.group(1) != "0":  # antes do registo no bootstrapper o nó ainda é o 0
-                nos[nome].id = m.group(1)
-                break
-    nomes = {n.id: n.nome for n in nos.values() if n.id}
-
-    def nm(i) -> str:
-        return nomes.get(str(i), str(i)) if i not in (None, "None", "nenhum") else "-"
-
-    def traduzir_motivo(motivo: str) -> str:
-        return re.sub(r"\b(vizinho|de|que) (\d+)\b", lambda m: f"{m.group(1)} {nm(m.group(2))}", motivo)
-
-    acontecimentos = []     # (hora, texto, chave para juntar, quem viu)
-    relatos = {}            # id do nó -> lista de (hora, "baixo"/"cima")
-    ativos_para = set()     # (quem relata, sobre quem): já esteve ativo para quem relata
-    em_baixo_para = set()   # (quem relata, sobre quem): deu-o como em baixo depois de ativo
-
-    for nome, regs in principais.items():
-        no = nos[nome]
-        for r in regs:
-            t = r.texto
-            no.ultima_hora = r.hora
-            if no.estado == "a arrancar" and no.id and t.startswith(f"[{no.id}] "):
-                no.estado = "ativo"
-            if (m := R_PAI.match(t)):
-                srv, pai, custo, motivo = m.groups()
-                no.pais[srv] = (None if pai == "nenhum" else pai, custo)
-                if motivo or pai == "nenhum":
-                    texto = f"{nome}: pai para {nm(srv)} → {nm(pai) if pai != 'nenhum' else 'nenhum'}"
-                    texto += f" (custo {custo})" if custo else ""
-                    texto += f" — {traduzir_motivo(motivo)}" if motivo else ""
-                    acontecimentos.append((r.hora, texto, None, None))
-            elif (m := R_VIDEO.match(t)):
-                video, srv, custo, antes = m.groups()
-                no.videos[video] = (srv, custo)
-                no.cliente = True
-                texto = f"{nome}: vídeo {video} de {nm(srv)} (custo {custo})"
-                if antes:
-                    texto += f", antes de {nm(antes)}"
-                acontecimentos.append((r.hora, texto, None, None))
-            elif (m := R_FLUXO.match(t)):
-                srv, video, _pai, destinos, ativo = m.groups()
-                lista = [] if destinos.startswith("(") else [d.strip() for d in destinos.split(",")]
-                no.fluxos[(srv, video)] = (lista, ativo == "True")
-            elif (m := R_VIZ.match(t)):
-                corpo = m.group(1)
-                no.vizinhos = [] if corpo.startswith("(") else [v.split("@")[0] for v in corpo.split(", ")]
-            elif (m := R_PING.match(t)):
-                _n, srv, video, caminho = m.groups()
-                ids = re.findall(r"(?:^|→ )(\d+)", caminho)
-                no.ping = (r.hora, ids, srv, video)
-            elif (m := R_BAIXO.match(t)):
-                outro, motivo = m.groups()
-                relatos.setdefault(outro, []).append((r.hora, "baixo"))
-                if (no.id, outro) in ativos_para:
-                    em_baixo_para.add((no.id, outro))
-                    acontecimentos.append((r.hora, f"{nm(outro)} em baixo ({motivo})", ("baixo", outro), nome))
-            elif (m := R_SAIU.match(t)):
-                outro = m.group(1)
-                relatos.setdefault(outro, []).append((r.hora, "baixo"))
-                em_baixo_para.add((no.id, outro))
-                acontecimentos.append((r.hora, f"{nm(outro)} saiu e avisou", ("saiu", outro), nome))
-            elif (m := R_VOLTOU.match(t)):
-                outro = m.group(1)
-                relatos.setdefault(outro, []).append((r.hora, "cima"))
-                if (no.id, outro) in em_baixo_para:
-                    em_baixo_para.discard((no.id, outro))
-                    acontecimentos.append((r.hora, f"{nm(outro)} voltou", ("voltou", outro), nome))
-                ativos_para.add((no.id, outro))
-            elif (m := R_REINICIO.match(t)):
-                outro = m.group(1) or m.group(2)
-                relatos.setdefault(outro, []).append((r.hora, "cima"))
-                acontecimentos.append((r.hora, f"{nm(outro)} reiniciou", ("reiniciou", outro), nome))
-            elif (m := R_AVO.match(t)):
-                via, avos = m.groups()
-                avos = re.sub(r"\b(\d+) \([\d.]+\)", lambda x: nm(x.group(1)), avos)
-                acontecimentos.append((r.hora, f"{nome}: só tem o vizinho {nm(via)}; guarda o avô: {avos}", None, None))
-            elif (m := R_SOCORRO.match(t)):
-                acontecimentos.append((r.hora, f"{nome}: sem vizinhos, pede socorro ao avô {nm(m.group(1))}", None, None))
-            elif (m := R_ACEITE.match(t)):
-                acontecimentos.append((r.hora, f"{nome}: aceita {nm(m.group(1))} como vizinho (socorro)", None, None))
-            elif (m := R_FIM_EMERG.match(t)):
-                volta, avo = m.groups()
-                acontecimentos.append((r.hora, f"{nome}: {nm(volta)} voltou, fecha a ligação de emergência a {nm(avo)}", None, None))
-            elif (m := R_NOSH.match(t)):
-                acao = m.group(1)
-                if "parado" in acao:
-                    no.estado = "parado (CLOSE)"
-                elif "kill -9" in acao:
-                    no.estado = "morto (kill -9)"
-                elif "arrancado" in acao:
-                    no.estado = "a arrancar"
-                acontecimentos.append((r.hora, f"{nome}: {acao}", None, None))
-            elif t == "nó OTT terminado":
-                if not no.estado.startswith(("parado", "morto")):
-                    no.estado = "terminou"
-            elif r.nivel == "ERROR":
-                no.estado = "erro"
-                acontecimentos.append((r.hora, f"{nome}: ERRO — {t}", None, None))
-
-    # Um nó que ainda parece ativo mas que os vizinhos deram como em baixo depois da última
-    # linha dele (ex: morto sem aviso, ou ligações cortadas) aparece como "sem sinal".
-    for no in nos.values():
-        if no.estado == "ativo" and no.id in relatos:
-            hora, tipo = max(relatos[no.id])
-            if tipo == "baixo" and hora >= no.ultima_hora:
-                no.estado = "sem sinal"
-
-    for nome, regs in players.items():
-        no = nos.setdefault(nome, No(nome))
-        no.cliente = True
-        for r in regs:
-            if (m := R_PLAYER_RESUMO.match(r.texto)):
-                no.player = m.group(1)
-            elif (m := R_PLAYER_PARAGEM.match(r.texto)):
-                no.paragem = f"{m.group(1)} ms às {r.hora[:8]}"
-                acontecimentos.append((r.hora, f"{nome}: vídeo parado {m.group(1)} ms ({m.group(2)})", None, None))
-
-    return nos, nm, juntar(acontecimentos)
+def tabela(cabecalho: list[str], linhas: list[list[str]], tinta: Tinta) -> list[str]:
+    larguras = [max(visivel(str(x)) for x in col) for col in zip(cabecalho, *linhas)] if linhas else \
+        [visivel(c) for c in cabecalho]
+    def fmt(lin):
+        return "  ".join(ajustar(str(x), w) for x, w in zip(lin, larguras)).rstrip()
+    return [tinta(fmt(cabecalho), "fraco")] + [fmt(lin) for lin in linhas]
 
 
-def segundos(hora: str) -> float:
-    h, m, s = hora.split(":")
-    return int(h) * 3600 + int(m) * 60 + float(s)
+def titulo(texto: str, largura: int, tinta: Tinta) -> list[str]:
+    return [tinta(texto, "negrito", "azul") + " " + tinta("─" * max(0, largura - len(texto) - 1), "azul")]
 
 
-def juntar(acontecimentos):
-    """Junta numa linha o mesmo aviso dado por vizinhos diferentes quase ao mesmo tempo."""
-    saida = []  # [hora, texto, chave, [quem viu]]
-    for hora, texto, chave, quem in sorted(acontecimentos, key=lambda a: a[0]):
-        if chave is not None:
-            for a in reversed(saida[-12:]):
-                if a[2] == chave and segundos(hora) - segundos(a[0]) <= JUNTAR_S:
-                    if quem not in a[3]:
-                        a[3].append(quem)
-                    break
-            else:
-                saida.append([hora, texto, chave, [quem]])
-        else:
-            saida.append([hora, texto, None, []])
-    linhas = []
-    for hora, texto, chave, quem in saida:
-        if quem:
-            texto += f" — visto por {', '.join(quem)}"
-        linhas.append((hora, texto))
+def pintor(estado: L.Estado, tinta: Tinta):
+    """Cor de cada nó na árvore: servidores a verde, clientes a ciano, em baixo a vermelho."""
+    def pintar(nome: str, texto: str) -> str:
+        no = estado.nos.get(nome)
+        if no is not None and no.em_baixo:
+            return tinta(texto, "vermelho", "negrito")
+        if nome.startswith("S"):
+            return tinta(texto, "verde", "negrito")
+        if nome.startswith("C"):
+            return tinta(texto, "ciano")
+        return texto
+    return pintar
+
+
+def bloco_arvores(estado: L.Estado, largura: int, tinta: Tinta) -> list[str]:
+    linhas = titulo("POR ONDE PASSA O VÍDEO", largura, tinta)
+    arvs = L.arvores(estado)
+    if not arvs:
+        linhas.append(tinta("  ainda nenhum vídeo a passar", "fraco"))
+    for arv in arvs:
+        linhas += ["  " + x for x in L.texto_arvore(arv, estado, pintor(estado, tinta))]
     return linhas
 
 
-def tabela(cabecalho, linhas) -> list[str]:
-    larguras = [max(len(str(x)) for x in col) for col in zip(cabecalho, *linhas)]
-    def fmt(lin):
-        return "  ".join(str(x).ljust(w) for x, w in zip(lin, larguras)).rstrip()
-    return [fmt(cabecalho)] + [fmt(lin) for lin in linhas]
+def bloco_clientes(estado: L.Estado, largura: int, tinta: Tinta) -> list[str]:
+    linhas = titulo("CLIENTES", largura, tinta)
+    clientes = sorted((n for n in estado.nos.values() if n.cliente), key=lambda n: L.ordem(n.nome))
+    if not clientes:
+        return linhas + [tinta("  ainda nenhum cliente", "fraco")]
+    nm = estado.nome
+    corpo = []
+    for n in clientes:
+        if n.em_baixo:
+            video = tinta(f"✖ {n.estado}", "vermelho")
+        elif n.videos:
+            video = tinta("▶ ", "magenta") + "; ".join(f"vídeo {v} de {nm(s)}" for v, (s, _c) in sorted(n.videos.items()))
+        else:
+            video = tinta("à espera", "amarelo")
+        caminho, atraso = "-", "-"
+        if n.ping:
+            _hora, saltos, _s, _v = n.ping
+            caminho = " → ".join(nm(i) for i, _ms in saltos)
+            total = sum(ms for _i, ms in saltos if ms is not None)
+            atraso = f"{total:.1f} ms".replace(".", ",")
+        perda, paragem = "-", "-"
+        if n.player and n.player.esperados:
+            pct = n.player.falta_pct
+            cor = "verde" if pct < 1 else "amarelo" if pct < 5 else "vermelho"
+            perda = tinta(f"{pct:.1f} %".replace(".", ","), cor)
+        if n.player and n.player.paragem:
+            hora, ms = n.player.paragem
+            paragem = f"{ms} ms às {hora[:8]}"
+        corpo.append([tinta(n.nome, "ciano", "negrito"), video, caminho, atraso, perda, paragem])
+    linhas += ["  " + x for x in tabela(["Cliente", "A ver", "Caminho (último PING)", "Atraso",
+                                         "Frames em falta", "Última paragem"], corpo, tinta)]
+    return linhas
 
 
-def desenhar(fonte: Fonte) -> str:
-    nos, nm, acontecimentos = analisar(fonte)
-    largura = shutil.get_terminal_size((150, 50)).columns
-    negrito = (lambda s: f"\033[1m{s}\033[0m") if sys.stdout.isatty() else (lambda s: s)
-    servidores = sorted({srv for n in nos.values() for srv in n.pais}, key=lambda s: ordem(nm(s)))
-    out = [negrito(f"{fonte.descricao()} · {time.strftime('%H:%M:%S')}"
-                   f" · atualiza de {ATUALIZAR_S} em {ATUALIZAR_S} s (Ctrl+C para sair)"), ""]
-
-    lista = sorted((n for n in nos.values() if n.id or n.pais), key=lambda n: ordem(n.nome))
-    linhas = []
-    for n in lista:
+def bloco_nos(estado: L.Estado, largura: int, tinta: Tinta) -> list[str]:
+    linhas = titulo("NÓS", largura, tinta)
+    nm = estado.nome
+    servidores = estado.servidores()
+    corpo = []
+    for n in sorted((n for n in estado.nos.values() if n.id or n.pais), key=lambda n: L.ordem(n.nome)):
+        simbolo, cor = SIMBOLO.get(n.estado, ("?", "amarelo"))
         pais = []
         for srv in servidores:
             if srv == n.id:
-                pais.append("(é ele)")
+                pais.append(tinta("(é este)", "verde"))
             elif srv in n.pais:
-                # O custo só aparece no log quando o pai muda, por isso não se mostra: estaria velho.
-                pais.append(nm(n.pais[srv][0]))
+                pai = n.pais[srv][0]
+                pais.append(nm(pai) if pai else tinta("nenhum", "vermelho"))
             else:
-                pais.append("?")
-        envia = []
-        for (srv, video), (destinos, ativo) in sorted(n.fluxos.items()):
-            if ativo:
-                para = ", ".join(nm(d) for d in destinos) or "player"
-                envia.append(f"{nm(srv)}/{video} → {para}")
-        linhas.append([n.nome, n.id, n.estado, len(n.vizinhos), *pais, "; ".join(envia) or "-"])
-    out.append(negrito("NÓS") + "   (pai = de quem recebe o vídeo desse servidor; viz. = vizinhos ativos; envia = fluxos ativos e para onde)")
-    out += tabela(["Nó", "ID", "Estado", "Viz.", *[f"Pai p/ {nm(s)}" for s in servidores], "Envia"], linhas)
-    out.append("")
+                pais.append(tinta("?", "fraco"))
+        vizinhos = " ".join(sorted((nm(v) for v in n.vizinhos), key=L.ordem)) or tinta("nenhum", "fraco")
+        if n.em_baixo:  # o que o log diz dele já é velho
+            pais, vizinhos = [tinta(ANSI.sub("", p), "fraco") for p in pais], tinta(ANSI.sub("", vizinhos), "fraco")
+        corpo.append([tinta(f"{simbolo} {n.nome}", cor, "negrito"), n.id or "?", tinta(n.estado, cor),
+                      *pais, vizinhos])
+    linhas += ["  " + x for x in tabela(["Nó", "ID", "Estado", *[f"Pai p/ {nm(s)}" for s in servidores],
+                                         "Vizinhos ativos"], corpo, tinta)]
+    return linhas
 
-    clientes = sorted((n for n in nos.values() if n.cliente), key=lambda n: ordem(n.nome))
-    linhas = []
-    for n in clientes:
-        if n.videos:
-            video = "; ".join(f"{v} de {nm(srv)}" for v, (srv, _c) in sorted(n.videos.items()))
-        else:
-            video = "; ".join(f"{v} de {nm(srv)}" for (srv, v), (d, a) in n.fluxos.items() if a and not d) or "-"
-        caminho = "-"
-        if n.ping:
-            hora, ids, _srv, _v = n.ping
-            caminho = f"{' → '.join(nm(i) for i in ids)}  ({hora[:8]})"
-        linhas.append([n.nome, video, caminho, n.player or "-", n.paragem or "-"])
-    out.append(negrito("CLIENTES") + "   (caminho = último PING; player = contagem desde que abriu)")
-    out += tabela(["Cliente", "Vídeo", "Caminho do vídeo", "Player", "Última paragem"], linhas)
-    out.append("")
 
-    out.append(negrito("ÚLTIMOS ACONTECIMENTOS"))
-    for hora, texto in acontecimentos[-N_ACONTECIMENTOS:]:
-        out.append(f"{hora}  {texto}")
-    return "\n".join(linha[:largura] if not linha.startswith("\033") else linha for linha in out)
+def bloco_acontecimentos(estado: L.Estado, largura: int, n: int, tinta: Tinta) -> list[str]:
+    linhas = titulo("ÚLTIMOS ACONTECIMENTOS", largura, tinta)
+    evs = estado.acontecimentos[-n:] if n > 0 else []
+    if not evs:
+        linhas.append(tinta("  nada ainda", "fraco"))
+    for ev in evs:
+        simbolo, cor = TIPO.get(ev.tipo, ("·", "cinza"))
+        linhas.append(f"  {tinta(ev.hora, 'fraco')}  {tinta(simbolo, cor, 'negrito')} {tinta(ev.texto, cor) if ev.tipo in (L.FALHA, L.ERRO_EV) else ev.texto}")
+    return linhas
+
+
+def cabecalho(estado: L.Estado, largura: int, tinta: Tinta, ao_vivo: bool) -> list[str]:
+    nos = [n for n in estado.nos.values() if n.id or n.pais]
+    ativos = sum(n.estado == L.ATIVO for n in nos)
+    baixo = sum(n.em_baixo for n in nos)
+    arrancar = sum(n.estado == L.A_ARRANCAR for n in nos)
+    clientes = [n for n in estado.nos.values() if n.cliente]
+    a_ver = sum(bool(n.videos) and not n.em_baixo for n in clientes)
+    esq = f" OTT · cenário {estado.cenario} "
+    quando = time.strftime("%H:%M:%S") if ao_vivo else f"estado às {estado.hora[:8] or '?'}"
+    dir_ = (f" {quando} · {len(nos)} nós: {ativos} ativos"
+            + (f", {arrancar} a arrancar" if arrancar else "")
+            + (f", {baixo} em baixo" if baixo else "")
+            + f" · {a_ver} de {len(clientes)} clientes a ver vídeo ")
+    meio = " " * max(1, largura - len(esq) - len(dir_))
+    # A barra fica vermelha enquanto houver um nó em baixo, para se ver de longe.
+    return [tinta(esq + meio + dir_, "invertido", "negrito", "vermelho" if baixo else "azul"), ""]
+
+
+def desenhar(cenario: str, ate: str | None, tinta: Tinta, largura: int, altura: int, ao_vivo: bool) -> list[str]:
+    estado = L.analisar(cenario, ate)
+    out = cabecalho(estado, largura, tinta, ao_vivo)
+    if largura >= LARGURA_DUAS_COLUNAS:
+        esq_l = max(34, min(48, largura * 2 // 7))
+        dir_l = largura - esq_l - 3
+        esq = bloco_arvores(estado, esq_l, tinta)
+        dir_ = bloco_clientes(estado, dir_l, tinta)
+        for i in range(max(len(esq), len(dir_))):
+            a = esq[i] if i < len(esq) else ""
+            b = dir_[i] if i < len(dir_) else ""
+            out.append(ajustar(a, esq_l) + tinta(" │ ", "azul") + b)
+    else:
+        out += bloco_arvores(estado, largura, tinta) + [""] + bloco_clientes(estado, largura, tinta)
+    out.append("")
+    out += bloco_nos(estado, largura, tinta)
+    out.append("")
+    legenda = tinta("  ● ativo  ◌ a arrancar  ✖ em baixo  ■ parado   ▶ a ver vídeo   "
+                    + ("Ctrl+C para sair" if ao_vivo else ""), "fraco")
+    sobra = altura - len(out) - 3 if ao_vivo else 12
+    out += bloco_acontecimentos(estado, largura, max(3, sobra), tinta)
+    out += ["", legenda]
+    return [ajustar(x, largura).rstrip() for x in out]
+
+
+def cenario_atual() -> str | None:
+    return L.cenario_atual()  # o do script, ou o dos nós arrancados à mão (logs/core-*/)
 
 
 def main() -> None:
-    args = [a for a in sys.argv[1:] if a != "--uma-vez"]
-    if args and args[0] in ("1", "2", "3") and len(args) == 1:
-        fonte = Fonte(cenario=args[0])
-    elif len(args) == 2 and args[0] == "--pasta":
-        fonte = Fonte(pasta=Path(args[1]).resolve())
-    elif not args:
-        pasta = sessao_mais_recente()
-        if pasta is None:
-            sys.exit("Não há logs de nós arrancados à mão em logs/core-*/. "
-                     "Para os do script: python3 scripts/painel.py 2|3")
-        fonte = Fonte(pasta=pasta)
-    else:
-        sys.exit("Uso: python3 scripts/painel.py [2|3 | --pasta DIR] [--uma-vez]")
-    if "--uma-vez" in sys.argv:
-        print(desenhar(fonte))
+    args = sys.argv[1:]
+    cenario = next((a for a in args if a in ("1", "2", "3")), None) or cenario_atual()
+    if cenario is None:
+        sys.exit("Uso: python3 scripts/painel.py [1|2|3] [--uma-vez] [--hora HH:MM:SS] [--sem-cor]")
+    ate = None
+    if "--hora" in args:
+        i = args.index("--hora")
+        if i + 1 >= len(args) or not re.fullmatch(r"\d\d:\d\d:\d\d(\.\d{1,3})?", args[i + 1]):
+            sys.exit("--hora: no formato HH:MM:SS (ex: 16:05:30)")
+        ate = args[i + 1]
+    tinta = Tinta(sys.stdout.isatty() and "--sem-cor" not in args)
+    tamanho = shutil.get_terminal_size((150, 50))
+    if "--uma-vez" in args or ate:
+        print("\n".join(desenhar(cenario, ate, tinta, tamanho.columns, tamanho.lines, False)))
         return
+    sys.stdout.write("\033[?1049h\033[?25l")  # ecrã à parte e sem cursor, para não piscar
     try:
         while True:
-            ecra = desenhar(fonte)
-            sys.stdout.write("\033[H\033[2J" + ecra + "\n")
+            tamanho = shutil.get_terminal_size((150, 50))
+            linhas = desenhar(cenario, None, tinta, tamanho.columns, tamanho.lines, True)
+            sys.stdout.write("\033[H" + "\n".join(x + "\033[K" for x in linhas[:tamanho.lines]) + "\033[J")
             sys.stdout.flush()
             time.sleep(ATUALIZAR_S)
     except KeyboardInterrupt:
         pass
+    finally:
+        sys.stdout.write("\033[?25h\033[?1049l")
+        sys.stdout.flush()
 
 
 if __name__ == "__main__":
