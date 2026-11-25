@@ -51,7 +51,7 @@ Para o player, um servidor de vídeo ou o bootstrapper, junta o programa depois 
 
 Os programas correm em segundo plano, por isso o Stop do CORE não chega para os parar: usar o `./rede stop` antes. O script de arranque também para o que tiver ficado de uma execução anterior.
 
-**Desenho da árvore** (`./rede arvore`): escreve a árvore de cada vídeo no terminal e faz uma figura em `logs/arvore-cenarioN.svg`, com as posições do CORE, os vizinhos do overlay a tracejado e uma seta de cor por vídeo. Para o relatório:
+**Desenho da árvore** (`./rede arvore`): escreve a árvore de cada vídeo no terminal e faz uma figura em `logs/arvore-cenarioN.svg`, com as posições do CORE, os vizinhos do overlay a tracejado e uma seta de cor por vídeo. Os clientes ficam de fora, como pediu o professor (`--com-clientes` para os mostrar). Para o relatório:
 
 ```bash
 python3 scripts/arvore.py 3 --hora 16:05:30 --saida relatorio/figuras/arvore-antes.svg   # estado a essa hora
@@ -219,3 +219,75 @@ python3 scripts/analisar_medicoes.py logs/C1-overlay.csv logs/C1-direto.csv
 | 1, 2 e 3 clientes, com e sem overlay | Sem overlay, o tráfego à saída do S1 cresce com os clientes. Com overlay, sai uma só cópia por vídeo |
 | Perda ou atraso numa ligação | A perda e o atraso no cliente sobem; com a troca de pai, voltam a descer |
 | Cortar a ligação do pai | Um corte na análise (`aos X s: Y ms sem vídeo`): Y é o tempo de recuperação |
+
+## 6. Testes dos extras
+
+### Largura de banda limitada (a cópia única com números)
+
+Com 3 clientes, sem overlay o S1 precisa de cerca de 4 Mbit/s (uma cópia por cliente) e com overlay
+de cerca de 2,6 Mbit/s (uma cópia por vizinho; ver [`resultados-medicoes.md`](resultados-medicoes.md)).
+Limitando a saída do S1 a 3 Mbit/s, um cabe e o outro não:
+
+```bash
+sudo -E bash scripts/arrancar_cenario.sh 3 --medir overlay --clientes 3 --limite 3mbit
+# no.sh parar-tudo, Stop e Start
+sudo -E bash scripts/arrancar_cenario.sh 3 --medir direto --clientes 3 --limite 3mbit
+```
+
+O que se espera: sem overlay, perda e cortes nos 3 clientes (a análise mostra-os) e `dropped` alto
+no `S1-tc.txt`; com overlay, nenhuma perda e `dropped` perto de 0. Os resultados ficam em
+`logs/medicoes/cenario3-<modo>-3cli-3mbit/`.
+
+### Overlay contra o OSPF dos routers (falha silenciosa)
+
+A ideia vem do *Resilient Overlay Networks* (Andersen et al., 2001): um overlay pode dar pela falha
+de um caminho antes do encaminhamento da rede por baixo. No cenário 3, o vídeo do S1 chega ao N1
+pela ligação R6–R3 (10.0.10.0/24); há outro caminho, R6–R5–R3.
+
+1. Arrancar o cenário 3 (à mão ou com o script) e confirmar que o C1 recebe o vídeo do S1 pelo N1
+   (`PING … 17 → 13 → 14`). Ver os tempos do OSPF num router, por ex. no R3:
+   `vtysh -c "show ip ospf interface" | grep -i -E "hello|dead"` (o *dead interval* é o tempo que o
+   OSPF leva a dar por um vizinho calado).
+   **Confirmar os caminhos na rede por baixo** com `traceroute -n`: do S1 para o N1 (10.0.18.20) tem
+   de passar por 10.0.10.x; e o N1 tem de ter outro vizinho que chegue ao S1 sem passar por essa
+   ligação (ex: no N1, `traceroute -n 10.0.25.20` para o N2 e, no N2, `traceroute -n 10.0.20.20`).
+   Os routers podem repartir o tráfego por dois caminhos de custo igual; se o único caminho
+   alternativo do N1 também passar pela ligação cortada, escolher outra ligação.
+2. No S1, deixar a correr: `ping -D -i 0.2 10.0.18.20` (o N1). Mostra quando a rede deixa de chegar
+   ao N1 e quando volta.
+3. **Falha silenciosa** da ligação R6–R3: a ligação continua "em cima", só deixa de passar tráfego,
+   por isso os routers só dão por ela quando os Hellos do OSPF deixam de chegar. No R3 e no R6,
+   descobrir a interface dessa rede (`ip -br addr | grep 10.0.10.`) e cortar:
+   `tc qdisc add dev ethX root netem loss 100%` (nos dois routers, ao mesmo tempo).
+4. Medir, a partir do momento do corte:
+   - **underlay:** quanto tempo o `ping` do passo 2 fica sem respostas (o OSPF a mudar para R6–R5–R3);
+   - **overlay:** no log do N1, `pai para o servidor 17: … (… ms sem vídeo de 17)`, e no player do
+     C1 a paragem do vídeo (`… ms sem frame novo`).
+5. Repor: `tc qdisc del dev ethX root` nos dois routers.
+6. **Para comparar, uma falha que os routers veem logo:** `ip link set ethX down` no R3. A interface
+   cai, o OSPF reage de imediato e o `ping` quase não falha: aí a vantagem do overlay desaparece.
+   Repor com `ip link set ethX up`.
+
+O que se espera: na falha silenciosa, se o N1 tiver um vizinho com um caminho que não passa pela
+ligação cortada, o overlay troca de pai em 0,3 a 0,5 s (falta de vídeo), muito antes de o OSPF dar
+pela falha (o *dead interval*), e o vídeo volta antes de a rede ter reencaminhado. Sem esse
+vizinho, o overlay fica à espera do OSPF como toda a gente: também é um resultado a discutir. Na
+falha com a interface em baixo, os dois reagem depressa.
+
+### Pedido de socorro ao avô
+
+No cenário 3 (cada cliente tem 2 vizinhos): fazer falhar o N3 (`Ctrl+C`). O C1 fica só com o N1 e, uns
+segundos depois, mostra `só um vizinho vivo (13): pede-lhe o avô` e `avô guardado (via 13): 17 …`.
+Fazer falhar o N1 (`Ctrl+C`): o C1 mostra `sem vizinhos vivos: pede socorro ao avô 17`, o S1 mostra
+`pedido de socorro do nó 14 … aceite como vizinho`, e o vídeo volta, agora direto do S1
+(`PING … 17 → 14`). Voltar a arrancar o N1: 6 s depois de o N1 voltar, o C1 fecha a ligação ao S1
+(`fecha a ligação de emergência ao 17`). No painel, estes passos aparecem nos acontecimentos.
+
+### Árvore e Wireshark
+
+- `python3 scripts/arvore.py`: a árvore de cada vídeo, sem os clientes, no terminal e numa figura
+  (`logs/arvore-cenarioN.svg`). Lê os logs mais recentes: os do script ou os dos nós arrancados à mão.
+- Captura num nó: `tcpdump -i eth0 -w /tmp/n1.pcap udp port 5000`. Abrir no PC, como utilizador
+  normal (o Wireshark não corre scripts Lua como root):
+  `wireshark -X lua_script:wireshark/ott.lua /tmp/n1.pcap`. Filtros úteis: `ott.tipo == 0x03` (HELLO),
+  `ott.tipo == 0x10` (ANNOUNCE), `ott.fiavel == 1`, `ott.fluxo.servidor == 17`.

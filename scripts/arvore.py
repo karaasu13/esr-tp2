@@ -7,9 +7,11 @@ em texto no terminal e numa figura SVG com as posições do CORE, para o relató
     python3 scripts/arvore.py 3 --saida relatorio/figuras/arvore.svg
     python3 scripts/arvore.py 3 --seguir         # refaz a figura de 2 em 2 s (abrir o .html no browser)
     python3 scripts/arvore.py 3 --rede-real      # com os routers e os cabos da rede real, a cinzento
+    python3 scripts/arvore.py 3 --com-clientes   # também os clientes (por omissão ficam de fora)
 
 A figura usa as posições do CORE (topologias/cenarioN.xml) e mostra os vizinhos do overlay a
-tracejado e, por cima, a árvore de cada vídeo com setas de cor. Por
+tracejado e, por cima, a árvore de cada vídeo com setas de cor. Os clientes ficam de fora, como
+pediu o professor: a árvore é a do overlay, do servidor até aos nós que replicam o vídeo. Por
 omissão vai para logs/arvore-cenarioN.svg (e logs/arvore-cenarioN.html, que se atualiza sozinho).
 
 Tal como o painel, só lê os logs: é uma ferramenta de teste que corre fora do overlay, e nenhum
@@ -57,16 +59,18 @@ def cor_no(nome: str, no: L.No | None) -> str:
     return COR_SERVIDOR if nome.startswith("S") else COR_CLIENTE if nome.startswith("C") else COR_NO
 
 
-def svg(estado: L.Estado, rede_real: bool = False) -> str:
+def svg(estado: L.Estado, rede_real: bool = False, com_clientes: bool = False) -> str:
     pos = posicoes(estado)
     overlay = set(estado.nos) | {estado.nome(i) for n in estado.nos.values() for i in n.vizinhos}
+    if not com_clientes:
+        overlay -= L.clientes(estado) | {n for n in overlay if n.startswith("C") and n not in estado.nos}
     usados = [p for nome, p in pos.items() if rede_real or nome in overlay]
     if not usados:
         usados = [(0.0, 0.0)]
     x0, y0 = min(p[0] for p in usados) - MARGEM, min(p[1] for p in usados) - MARGEM - 40
     x1, y1 = max(p[0] for p in usados) + MARGEM, max(p[1] for p in usados) + MARGEM
     largura, altura = (x1 - x0) + LARGURA_LEGENDA, max(y1 - y0, 360)
-    arvs = L.arvores(estado)
+    arvs = L.arvores(estado, com_clientes)
     cor_de = {(a.servidor, a.video): CORES_FLUXO[i % len(CORES_FLUXO)] for i, a in enumerate(arvs)}
 
     def xy(nome):
@@ -104,7 +108,7 @@ def svg(estado: L.Estado, rede_real: bool = False) -> str:
             continue
         for v in no.vizinhos:
             outro = estado.nome(v)
-            if outro in pos and no.nome in pos:
+            if outro in pos and no.nome in pos and outro in overlay and no.nome in overlay:
                 pares.add(tuple(sorted((no.nome, outro))))
     for a, b in sorted(pares):
         (ax, ay), (bx, by) = xy(a), xy(b)
@@ -172,6 +176,8 @@ def svg(estado: L.Estado, rede_real: bool = False) -> str:
         ly += 20
     itens = [("dash", "vizinhos no overlay"), ("viz", "a ver vídeo (cor do vídeo)"),
              ("S", "servidor"), ("N", "nó intermédio"), ("C", "cliente"), ("X", "em baixo")]
+    if not com_clientes:
+        itens = [i for i in itens if i[0] not in ("viz", "C")]
     if rede_real:
         itens.append(("R", "rede real (routers e cabos)"))
     for tipo, texto in itens:
@@ -196,8 +202,8 @@ def html(svg_texto: str, cenario: str) -> str:
             f'<body style="margin:0;background:#f6f8fa">{svg_texto}</body></html>')
 
 
-def escrever(estado: L.Estado, saida: Path, rede_real: bool) -> Path:
-    figura = svg(estado, rede_real)
+def escrever(estado: L.Estado, saida: Path, rede_real: bool, com_clientes: bool = False) -> Path:
+    figura = svg(estado, rede_real, com_clientes)
     saida.parent.mkdir(parents=True, exist_ok=True)
     saida.write_text(figura, encoding="utf-8")
     pagina = saida.with_suffix(".html")
@@ -205,8 +211,8 @@ def escrever(estado: L.Estado, saida: Path, rede_real: bool) -> Path:
     return pagina
 
 
-def texto(estado: L.Estado) -> str:
-    arvs = L.arvores(estado)
+def texto(estado: L.Estado, com_clientes: bool = False) -> str:
+    arvs = L.arvores(estado, com_clientes)
     if not arvs:
         return "Ainda nenhum vídeo a passar."
     linhas = []
@@ -234,11 +240,12 @@ def main() -> None:
         sys.exit("--hora: no formato HH:MM:SS (ex: 16:05:30)")
     saida = Path(valor("--saida") or L.LOGS / f"arvore-cenario{cenario}.svg")
     rede_real = "--rede-real" in args
+    com_clientes = "--com-clientes" in args
 
     estado = L.analisar(cenario, ate)
     print(f"Cenário {cenario} · estado às {estado.hora[:8] or '?'}\n")
-    print(texto(estado))
-    pagina = escrever(estado, saida, rede_real)
+    print(texto(estado, com_clientes))
+    pagina = escrever(estado, saida, rede_real, com_clientes)
     print(f"\nFigura: {saida}  (para ver a atualizar: abre {pagina} no browser)")
     if "--seguir" not in args:
         return
@@ -248,7 +255,7 @@ def main() -> None:
     try:
         while True:
             time.sleep(2)
-            escrever(L.analisar(cenario), saida, rede_real)
+            escrever(L.analisar(cenario), saida, rede_real, com_clientes)
     except KeyboardInterrupt:
         pass
 

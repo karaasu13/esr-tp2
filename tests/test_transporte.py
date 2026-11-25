@@ -127,8 +127,35 @@ class TestTransporte(unittest.IsolatedAsyncioTestCase):
         with patch.object(ott_transporte, "ESPERA_ACK_SONDA", 0.2):
             await asyncio.sleep(1.5)
             self.assertEqual(len(a._vizinhos[2].sondas), ott_transporte.AMOSTRAS_PERDA)
-            self.assertAlmostEqual(a.perda(2), 0.3, delta=0.2)  # perdem-se as sondas do 1
-            self.assertAlmostEqual(b.perda(1), 0.3, delta=0.2)  # perdem-se os ACK do 1 (ida e volta)
+            # Pelos HELLOs sem ACK mede-se a ida e a volta: os dois veem a perda do 1.
+            self.assertAlmostEqual(a.perda_sondas(2), 0.3, delta=0.2)  # perdem-se as sondas do 1
+            self.assertAlmostEqual(b.perda_sondas(1), 0.3, delta=0.2)  # perdem-se os ACK do 1
+            # Pelos números em falta mede-se só o sentido de lá para cá, e é essa que perda() dá.
+            self.assertAlmostEqual(b.perda(1), 0.3, delta=0.1)  # do 1 para o 2: 30%
+            self.assertEqual(a.perda(2), 0.0)  # do 2 para o 1 não se perde nada
+
+    async def test_perda_pelos_numeros_em_falta_conta_todos_os_pacotes(self):
+        a, b = await self.par(sondas=0, idle_timeout=10)
+        a.perda_simulada = 0.1
+        for k in range(400):  # mensagens não fiáveis, como o vídeo: sem HELLOs nenhuns
+            a.send(2, Tipo.DATA, b"x" * 10)
+        await asyncio.sleep(0.2)
+        self.assertIsNone(b.perda_sondas(1))
+        self.assertAlmostEqual(b.perda(1), 0.1, delta=0.06)  # janela: os últimos 200 números
+
+    def test_sequencia_fora_de_ordem_e_recomeco(self):
+        seq = ott_transporte._Sequencia()
+        for pn in (100, 101, 103, 104):  # falta o 102
+            seq.registar(pn)
+        self.assertEqual(list(seq.janela), [True, True, False, True, True])
+        seq.registar(102)  # chegou atrasado: já não falta
+        self.assertEqual(seq.janela.count(False), 0)
+        seq.registar(0x80000000)  # vizinho reiniciado, numeração nova: recomeça, sem contar perda
+        self.assertEqual(list(seq.janela), [True])
+        seq.esperado = 0xFFFFFFFF
+        seq.registar(0xFFFFFFFF)
+        seq.registar(0)  # dá a volta aos 32 bits sem buracos
+        self.assertEqual(list(seq.janela), [True, True, True])
 
     async def test_limite_segue_o_intervalo_anunciado_e_o_rto(self):
         a, b = await self.par(sondas=0, idle_timeout=None)

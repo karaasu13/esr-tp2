@@ -39,6 +39,13 @@ R_PLAYER_RESUMO = re.compile(
     r"^player: (?:a sair: )?frame \d+ · recebidos (\d+) de (\d+) · em falta (\d+) \(([\d.]+) %\) · atrasados (\d+)$")
 R_PLAYER_PARAGEM = re.compile(r"^player: (\d+) ms sem frame novo \((.*)\)$")
 R_NOSH = re.compile(r"^no\.sh: (.*)$")
+# Pedido de socorro ao avô
+R_AVO = re.compile(r"^\[\d+\] avô guardado \(via (\d+)\): (.*)$")
+R_SOCORRO = re.compile(r"^\[\d+\] sem vizinhos vivos: pede socorro ao avô (\d+)")
+R_ACEITE = re.compile(r"^\[\d+\] pedido de socorro do nó (\d+) .*: aceite como vizinho$")
+R_FIM_EMERG = re.compile(r"^\[\d+\] o vizinho (\d+) voltou: fecha a ligação de emergência ao (\d+)$")
+R_LEITOR = re.compile(r"^\[\d+\] vídeo (\d+): o servidor local (deixou de mandar frames|voltou)")
+R_PLAYER_FECHOU = re.compile(r"^\[\d+\] o player fechou: deixo de pedir o vídeo (.*)$")
 R_ARRANQUE = re.compile(r"^\[0\] à escuta em ")
 
 # Estados de um nó, do melhor para o pior
@@ -303,6 +310,24 @@ def analisar(cenario: str, ate: str | None = None) -> Estado:
                 outro = m.group(1) or m.group(2)
                 relatos.setdefault(outro, []).append((r.hora, "cima"))
                 eventos.append((r.hora, f"{nm(outro)} reiniciou", RECUPERA, ("reiniciou", outro), nome))
+            elif (m := R_AVO.match(t)):
+                via, avos = m.groups()
+                avos = re.sub(r"\b(\d+) \([\d.]+\)", lambda x: nm(x.group(1)), avos)
+                eventos.append((r.hora, f"{nome}: só tem o vizinho {nm(via)}; guarda o avô {avos}", ACAO, None, None))
+            elif (m := R_SOCORRO.match(t)):
+                eventos.append((r.hora, f"{nome}: sem vizinhos, pede socorro ao avô {nm(m.group(1))}", FALHA, None, None))
+            elif (m := R_ACEITE.match(t)):
+                eventos.append((r.hora, f"{nome}: aceita {nm(m.group(1))} como vizinho (socorro)", RECUPERA, None, None))
+            elif (m := R_FIM_EMERG.match(t)):
+                volta, avo = m.groups()
+                eventos.append((r.hora, f"{nome}: {nm(volta)} voltou, fecha a ligação de emergência a {nm(avo)}", RECUPERA, None, None))
+            elif (m := R_LEITOR.match(t)):
+                video, o_que = m.groups()
+                parou = o_que.startswith("deixou")
+                eventos.append((r.hora, f"{nome}: leitor do vídeo {video} {'parou (deixa de o anunciar)' if parou else 'voltou'}",
+                                FALHA if parou else RECUPERA, None, None))
+            elif (m := R_PLAYER_FECHOU.match(t)):
+                eventos.append((r.hora, f"{nome}: o player fechou, deixa de pedir o vídeo", ACAO, None, None))
             elif (m := R_NOSH.match(t)):
                 acao = m.group(1)
                 if "parado" in acao:  # no.sh parar: saída avisada (CLOSE)
@@ -364,15 +389,27 @@ def _juntar(eventos) -> list[Acontecimento]:
             for h, t, tipo, _c, q in saida]
 
 
-def arvores(estado: Estado) -> list[Arvore]:
+def clientes(estado: Estado) -> set[str]:
+    """Os nós que são clientes: pediram um vídeo (--ver) ou têm player."""
+    return {n.nome for n in estado.nos.values() if n.cliente or n.player is not None}
+
+
+def arvores(estado: Estado, com_clientes: bool = False) -> list[Arvore]:
     """Uma árvore por fluxo ativo, a partir dos destinos que cada nó escreveu no log.
+
+    Por omissão sem os clientes, como pediu o professor: a árvore é a do overlay, do servidor até
+    aos nós que replicam o vídeo. Com `com_clientes`, os clientes aparecem nas folhas (▶).
 
     A árvore é o que os logs dizem: um nó que morreu sem aviso continua com a última tabela que
     escreveu, até os vizinhos o darem como em baixo e escreverem a deles."""
+    de_fora = set() if com_clientes else clientes(estado)
     fluxos = sorted({f for n in estado.nos.values() for f, fl in n.fluxos.items() if fl.ativo},
                     key=lambda f: (ordem(estado.nome(f[0])), int(f[1])))
     saida = []
     for srv, video in fluxos:
+        servidor = estado.nos.get(estado.nome(srv))
+        if servidor is not None and servidor.em_baixo:
+            continue  # servidor em baixo: as linhas que ficaram nos logs já não são uma árvore
         filhos, ao_player, com_fluxo = {}, set(), set()
         for no in estado.nos.values():
             fl = no.fluxos.get((srv, video))
@@ -384,14 +421,17 @@ def arvores(estado: Estado) -> list[Arvore]:
             # Só conta "envia a F" se o F também diz que este nó é o seu pai: um nó que morreu, ou
             # que ainda não soube que o F trocou de pai, fica com destinos velhos no log.
             destinos = [estado.nome(d) for d in fl.destinos if _pai_de(estado, estado.nome(d), srv) in (None, no.id)]
+            destinos = [d for d in destinos if d not in de_fora]
             if destinos:
                 filhos[no.nome] = sorted(destinos, key=ordem)
-            elif no.cliente or no.player:
+            elif (no.cliente or no.player) and no.nome not in de_fora:
                 ao_player.add(no.nome)
         for no in estado.nos.values():  # o cliente nem sempre escreve a linha do fluxo
-            if no.videos.get(video, (None,))[0] == srv and not no.em_baixo:
+            if (no.videos.get(video, (None,))[0] == srv and not no.em_baixo
+                    and no.nome not in de_fora):
                 ao_player.add(no.nome)
                 com_fluxo.add(no.nome)
+        com_fluxo -= de_fora
         raiz = estado.nome(srv)
         vistos, fila = {raiz}, [raiz]
         while fila:

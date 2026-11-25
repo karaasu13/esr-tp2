@@ -13,9 +13,13 @@ O que este módulo garante a quem o usa (bootstrapper, vizinhos, rotas, streamin
     Mensagens fiáveis para um vizinho são retransmitidas até haver ACK ou até ele cair.
   * rtt(id): RTT suavizado até ao vizinho, medido com os ACK (métrica da Etapa 2).
   * rtt_min(id), jitter(id), perda(id): as três medidas da ligação que as rotas usam no custo.
+    A perda conta-se pelos números de pacote em falta: cada nó numera à parte os pacotes que manda
+    a cada endereço, por isso quem recebe vê os buracos na sequência (todos os pacotes contam,
+    vídeo incluído, e só no sentido de lá para cá). Com poucos pacotes, usa os HELLOs sem ACK.
 
 Ideias do QUIC usadas (ver docs/protocolo.md):
-  * nº de pacote nunca reutilizado, nem nas retransmissões -> RTT sem ambiguidade;
+  * nº de pacote nunca reutilizado, nem nas retransmissões -> RTT sem ambiguidade (um contador
+    por endereço de destino, para quem recebe poder contar os que faltam);
   * a identidade da mensagem (id_msg) é separada do nº de pacote -> o recetor
     deteta duplicados quando um ACK se perde e a mensagem é retransmitida;
   * idle timeout para detetar vizinhos mortos, com o limite combinado entre vizinhos como no
@@ -52,7 +56,10 @@ MAX_TENTATIVAS = 5  # para não vizinhos; para vizinhos só avisa e continua (de
 
 MAX_ENVIOS_GUARDADOS = 4096  # para o cálculo do RTT
 AMOSTRAS_RTT_MIN = 10  # rtt_min = mínimo das últimas N amostras
-AMOSTRAS_PERDA = 20  # perda = fração das últimas N sondas (HELLO) sem ACK
+AMOSTRAS_PERDA = 20  # perda pelos HELLOs = fração das últimas N sondas sem ACK
+JANELA_SEQUENCIA = 200  # perda pelos números em falta: os últimos N números de pacote do vizinho
+MIN_SEQUENCIA = 50  # com menos números do que isto, a perda vem dos HELLOs
+SALTO_MAXIMO = 1000  # um salto maior na sequência é um recomeço (vizinho reiniciado), não perda
 ESPERA_ACK_SONDA = 1.0  # uma sonda sem ACK neste tempo conta como perdida
 PASSO_VIGIA = 0.05  # de quanto em quanto tempo se verificam os limites de silêncio
 MAX_VISTOS_POR_ORIGEM = 1024  # para a deteção de duplicados
@@ -72,12 +79,49 @@ class _Pendente:
     timer: asyncio.TimerHandle | None = None
 
 
+class _Sequencia:
+    """Números de pacote recebidos de um vizinho: conta os que faltam (perda de lá para cá).
+
+    Cada nó numera à parte os pacotes que manda a cada endereço, por isso, do lado de quem recebe,
+    a sequência de um vizinho só tem buracos onde um pacote se perdeu. Guarda os últimos
+    JANELA_SEQUENCIA números: True = chegou, False = ainda não chegou."""
+
+    def __init__(self) -> None:
+        self.esperado: int | None = None  # próximo número que deve chegar
+        self.janela: deque = deque(maxlen=JANELA_SEQUENCIA)
+
+    def registar(self, pn: int) -> None:
+        if self.esperado is None:
+            self.esperado = (pn + 1) & 0xFFFFFFFF
+            self.janela.append(True)
+            return
+        avanco = (pn - self.esperado) & 0xFFFFFFFF
+        if avanco < SALTO_MAXIMO:  # chegou o esperado, ou um mais à frente (faltam os do meio)
+            self.janela.extend([False] * min(avanco, JANELA_SEQUENCIA))
+            self.janela.append(True)
+            self.esperado = (pn + 1) & 0xFFFFFFFF
+            return
+        atraso = (self.esperado - pn) & 0xFFFFFFFF  # quantos números atrás do próximo esperado
+        if atraso <= len(self.janela):  # chegou fora de ordem: já não falta
+            self.janela[len(self.janela) - atraso] = True
+        elif atraso > SALTO_MAXIMO:  # nem atrás nem à frente: o vizinho recomeçou a numerar
+            self.esperado = (pn + 1) & 0xFFFFFFFF
+            self.janela.clear()
+            self.janela.append(True)
+
+    def perda(self) -> float | None:
+        if len(self.janela) < MIN_SEQUENCIA:
+            return None
+        return self.janela.count(False) / len(self.janela)
+
+
 @dataclass
 class _Vizinho:
     addr: Endereco
     ultimo_rx: float
     intervalo: float = INTERVALO_HELLO  # intervalo de HELLO que o vizinho anunciou
     sondas: deque = field(default_factory=lambda: deque(maxlen=AMOSTRAS_PERDA))  # True = com ACK
+    sequencia: _Sequencia = field(default_factory=_Sequencia)  # números de pacote dele
 
 
 class Transporte(asyncio.DatagramProtocol):
@@ -108,18 +152,21 @@ class Transporte(asyncio.DatagramProtocol):
 
         self._transport: asyncio.DatagramTransport | None = None
         self._tarefa_vigia: asyncio.Task | None = None
-        # Nº inicial aleatório, como o ISN do TCP: se o nó reiniciar, os ids das mensagens
-        # novas não colidem com os que os vizinhos ainda guardam da execução anterior.
-        self._pn = self._rand.randrange(1, 1 << 31)
+        # Um contador de pacotes por endereço de destino, cada um a começar num nº aleatório,
+        # como o ISN do TCP: se o nó reiniciar, os ids das mensagens novas não colidem com os
+        # que os vizinhos ainda guardam da execução anterior. Por ser um por destino, quem recebe
+        # vê os números seguidos e conta os que faltam (perda). Os pn só se repetem entre
+        # destinos diferentes, por isso tudo o que é indexado por pn leva também o endereço.
+        self._pn: dict[Endereco, int] = {}
         self._enderecos: dict[int, Endereco] = {}  # ID -> (ip, porta), inclui o bootstrapper
         self._vizinhos: dict[int, _Vizinho] = {}  # só estes têm limite de silêncio e medidas
-        self._pendentes: dict[int, _Pendente] = {}  # id_msg -> mensagem por confirmar
-        self._pn_para_msg: dict[int, int] = {}  # pn -> id_msg (cada retransmissão tem pn novo)
-        self._envios: OrderedDict[int, tuple[float, int]] = OrderedDict()  # pn -> (t, destino)
+        self._pendentes: dict[tuple[Endereco, int], _Pendente] = {}  # (addr, id_msg) -> por confirmar
+        self._pn_para_msg: dict[tuple[Endereco, int], int] = {}  # (addr, pn) -> id_msg
+        self._envios: OrderedDict[tuple[Endereco, int], tuple[float, int]] = OrderedDict()  # (addr, pn) -> (t, destino)
         self._vistos: dict[tuple[Endereco, int], OrderedDict[int, None]] = {}
         self._rtt: dict[int, list[float]] = {}  # ID -> [srtt, rttvar]
         self._amostras_rtt: dict[int, deque] = {}  # ID -> últimas amostras de RTT
-        self._sondas_pendentes: dict[int, tuple[float, int]] = {}  # pn -> (t, vizinho)
+        self._sondas_pendentes: dict[tuple[Endereco, int], tuple[float, int]] = {}  # (addr, pn) -> (t, vizinho)
 
     # ------------------------------------------------------------ ciclo de vida
     async def start(self, host: str = "0.0.0.0", porta: int = PORTA) -> None:
@@ -197,11 +244,26 @@ class Transporte(asyncio.DatagramProtocol):
         return r[1] if r else None
 
     def perda(self, no: int) -> float | None:
-        """Fração (0 a 1) das últimas AMOSTRAS_PERDA sondas sem ACK a tempo, ou None."""
+        """Fração (0 a 1) de pacotes perdidos do vizinho para cá, ou None sem medições.
+
+        Pelos números de pacote em falta, quando já há MIN_SEQUENCIA números; antes disso, pelos
+        HELLOs (sondas) sem ACK a tempo, que medem a ida e a volta juntas."""
+        por_sequencia = self.perda_sequencia(no)
+        return por_sequencia if por_sequencia is not None else self.perda_sondas(no)
+
+    def perda_sequencia(self, no: int) -> float | None:
+        v = self._vizinhos.get(no)
+        return v.sequencia.perda() if v else None
+
+    def perda_sondas(self, no: int) -> float | None:
         v = self._vizinhos.get(no)
         if v is None or not v.sondas:
             return None
         return v.sondas.count(False) / len(v.sondas)
+
+    def pendente(self, destino: int, id_msg: int) -> bool:
+        """A mensagem fiável `id_msg` (devolvida por send) para `destino` ainda espera o ACK."""
+        return (self._enderecos.get(destino), id_msg) in self._pendentes
 
     # ------------------------------------------------------------ envio
     def register(self) -> int:
@@ -225,9 +287,9 @@ class Transporte(asyncio.DatagramProtocol):
         if addr is None:
             raise ValueError(f"destino {destino} sem endereço conhecido")
         if sonda:
-            pn = self._proximo_pn()
+            pn = self._proximo_pn(addr)
             if destino in self._vizinhos:
-                self._sondas_pendentes[pn] = (time.monotonic(), destino)
+                self._sondas_pendentes[(addr, pn)] = (time.monotonic(), destino)
             return self._enviar(addr, destino, tipo, codificar_corpo(corpo), fluxo,
                                 Flag.FIAVEL, id_msg=pn, pn=pn)
         return self.send_to(destino, addr, tipo, corpo, fiavel, fluxo)
@@ -245,21 +307,24 @@ class Transporte(asyncio.DatagramProtocol):
         dados = codificar_corpo(corpo)
         if not fiavel:
             return self._enviar(addr, destino, tipo, dados, fluxo)
-        id_msg = self._proximo_pn()  # o 1.º pn da mensagem passa a ser a sua identidade
+        id_msg = self._proximo_pn(addr)  # o 1.º pn da mensagem passa a ser a sua identidade
         p = _Pendente(destino, addr, tipo, dados, fluxo, id_msg)
-        self._pendentes[id_msg] = p
+        self._pendentes[(addr, id_msg)] = p
         self._transmitir(p, pn=id_msg)
         return id_msg
 
-    def _proximo_pn(self) -> int:
-        self._pn = (self._pn + 1) & 0xFFFFFFFF
-        return self._pn
+    def _proximo_pn(self, addr: Endereco) -> int:
+        atual = self._pn.get(addr)
+        if atual is None:
+            atual = self._rand.randrange(1, 1 << 31)
+        self._pn[addr] = (atual + 1) & 0xFFFFFFFF
+        return self._pn[addr]
 
     def _enviar(self, addr, destino, tipo, corpo, fluxo, flags=0, id_msg=None, pn=None) -> int:
-        pn = pn if pn is not None else self._proximo_pn()
+        pn = pn if pn is not None else self._proximo_pn(addr)
         pacote = Pacote(tipo, self.id, destino, pn, fluxo, flags, id_msg, corpo)
         if flags & Flag.FIAVEL:
-            self._envios[pn] = (time.monotonic(), destino)
+            self._envios[(addr, pn)] = (time.monotonic(), destino)
             if len(self._envios) > MAX_ENVIOS_GUARDADOS:
                 self._envios.popitem(last=False)
         if self.perda_simulada and self._rand.random() < self.perda_simulada:
@@ -269,16 +334,16 @@ class Transporte(asyncio.DatagramProtocol):
         return pn
 
     def _transmitir(self, p: _Pendente, pn: int | None = None) -> None:
-        pn = pn if pn is not None else self._proximo_pn()
+        pn = pn if pn is not None else self._proximo_pn(p.addr)
         p.tentativas += 1
         p.pns.append(pn)
-        self._pn_para_msg[pn] = p.id_msg
+        self._pn_para_msg[(p.addr, pn)] = p.id_msg
         if p.tentativas > 1:
             log.info("[%s] retransmissão %d de %s (msg %d) -> %s, pn=%d",
                      self.id, p.tentativas - 1, nome_tipo(p.tipo), p.id_msg, p.destino, pn)
         self._enviar(p.addr, p.destino, p.tipo, p.corpo, p.fluxo, Flag.FIAVEL, p.id_msg, pn)
         espera = min(self.rto_max, self._rto(p.destino) * 2 ** (p.tentativas - 1))  # backoff exponencial
-        p.timer = asyncio.get_running_loop().call_later(espera, self._expirou, p.id_msg)
+        p.timer = asyncio.get_running_loop().call_later(espera, self._expirou, (p.addr, p.id_msg))
 
     def _rto(self, no: int) -> float:
         r = self._rtt.get(no)
@@ -287,8 +352,9 @@ class Transporte(asyncio.DatagramProtocol):
         srtt, rttvar = r
         return max(RTO_MIN, srtt + 4 * rttvar)  # RFC 6298
 
-    def _expirou(self, id_msg: int) -> None:
-        p = self._pendentes.get(id_msg)
+    def _expirou(self, chave: tuple[Endereco, int]) -> None:
+        p = self._pendentes.get(chave)
+        id_msg = chave[1]
         if p is None:
             return
         if p.destino in self._vizinhos:
@@ -311,9 +377,9 @@ class Transporte(asyncio.DatagramProtocol):
     def _esquecer(self, p: _Pendente) -> None:
         if p.timer:
             p.timer.cancel()
-        self._pendentes.pop(p.id_msg, None)
+        self._pendentes.pop((p.addr, p.id_msg), None)
         for pn in p.pns:
-            self._pn_para_msg.pop(pn, None)
+            self._pn_para_msg.pop((p.addr, pn), None)
 
     def _cancelar_pendentes(self, no: int) -> None:
         for p in [p for p in self._pendentes.values() if p.destino == no]:
@@ -334,9 +400,11 @@ class Transporte(asyncio.DatagramProtocol):
         v = self._vizinhos.get(p.origem)
         if v:
             v.ultimo_rx = time.monotonic()
+            if addr == v.addr:
+                v.sequencia.registar(p.pn)
 
         if p.tipo == Tipo.ACK:
-            self._processar_ack(p)
+            self._processar_ack(p, addr)
             return
 
         if p.fiavel:
@@ -367,20 +435,21 @@ class Transporte(asyncio.DatagramProtocol):
         for chave in [c for c in self._vistos if c[1] == no]:
             del self._vistos[chave]
 
-    def _processar_ack(self, p: Pacote) -> None:
+    def _processar_ack(self, p: Pacote, addr: Endereco) -> None:
         if len(p.corpo) < CORPO_ACK.size:
             return
         (pn,) = CORPO_ACK.unpack_from(p.corpo)
-        envio = self._envios.pop(pn, None)
+        chave = (addr, pn)  # o ACK vem do endereço para onde foi o pacote
+        envio = self._envios.pop(chave, None)
         if envio:
             t, destino = envio
             self._amostra_rtt(destino, time.monotonic() - t)
-        sonda = self._sondas_pendentes.pop(pn, None)
+        sonda = self._sondas_pendentes.pop(chave, None)
         if sonda and sonda[1] in self._vizinhos:
             self._vizinhos[sonda[1]].sondas.append(True)  # a tempo: as atrasadas já saíram
-        id_msg = self._pn_para_msg.get(pn)
-        if id_msg is not None and id_msg in self._pendentes:
-            self._esquecer(self._pendentes[id_msg])
+        id_msg = self._pn_para_msg.get(chave)
+        if id_msg is not None and (addr, id_msg) in self._pendentes:
+            self._esquecer(self._pendentes[(addr, id_msg)])
 
     def _amostra_rtt(self, no: int, amostra: float) -> None:
         self._amostras_rtt.setdefault(no, deque(maxlen=AMOSTRAS_RTT_MIN)).append(amostra)
@@ -397,9 +466,9 @@ class Transporte(asyncio.DatagramProtocol):
         while True:
             await asyncio.sleep(PASSO_VIGIA)
             agora = time.monotonic()
-            for pn, (t, no) in list(self._sondas_pendentes.items()):
+            for chave, (t, no) in list(self._sondas_pendentes.items()):
                 if agora - t > ESPERA_ACK_SONDA:
-                    del self._sondas_pendentes[pn]
+                    del self._sondas_pendentes[chave]
                     if no in self._vizinhos:
                         self._vizinhos[no].sondas.append(False)
             for no, v in list(self._vizinhos.items()):

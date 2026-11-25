@@ -55,12 +55,15 @@ class TestLogsOtt(unittest.TestCase):
 
     def test_arvore_segue_o_pai_que_cada_no_diz_ter(self):
         estado = L.analisar("3")
-        [arv] = L.arvores(estado)
+        [arv] = L.arvores(estado, com_clientes=True)
         self.assertEqual((arv.raiz, arv.video), ("S1", "0"))
         self.assertEqual(arv.filhos, {"S1": ["N1"], "N1": ["C1"]})  # o N5 morto não conta como pai do C1
         self.assertEqual(arv.ao_player, {"C1"})
         texto = "\n".join(L.texto_arvore(arv, estado))
         self.assertIn("└─ C1 ▶", texto)
+        [sem] = L.arvores(estado)  # por omissão, sem os clientes (pedido do professor)
+        self.assertEqual(sem.filhos, {"S1": ["N1"]})
+        self.assertEqual(sem.ao_player, set())
 
     def test_estado_dos_nos_e_do_cliente(self):
         estado = L.analisar("3")

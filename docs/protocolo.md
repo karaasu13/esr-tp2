@@ -32,7 +32,7 @@ Cabeçalho fixo de **14 bytes**, ordem de rede (`struct "!BBBHHIHB"`).
 | flags | 1 B | bit 0 `FIAVEL`: o recetor tem de responder com ACK. Restantes bits reservados | ack-eliciting |
 | origem | 2 B | ID de quem envia. `0` = ainda sem ID (só antes do registo) | Source CID |
 | destino | 2 B | ID do destinatário. `0` = bootstrapper. Um nó com ID descarta pacotes que não são para si | Destination CID |
-| nº pacote (pn) | 4 B | Contador do nó, **nunca reutilizado**, nem nas retransmissões. Começa num valor aleatório (como o ISN do TCP), para um nó reiniciado não repetir ids que os vizinhos ainda guardam | Packet Number |
+| nº pacote (pn) | 4 B | Contador do nó **por endereço de destino**, **nunca reutilizado** para esse destino, nem nas retransmissões. Começa num valor aleatório (como o ISN do TCP), para um nó reiniciado não repetir ids que os vizinhos ainda guardam. Por ser um por destino, quem recebe vê os números seguidos e conta os que faltam (perda) | Packet Number |
 | fluxo: servidor | 2 B | ID do servidor de origem do fluxo. `0` = controlo | Stream ID |
 | fluxo: stream | 1 B | Qual dos vídeos desse servidor | Stream ID |
 | id da mensagem | 4 B | **Só em pacotes fiáveis.** Identifica a mensagem: é o pn do 1.º envio e mantém-se nas retransmissões | stream offset |
@@ -55,6 +55,8 @@ Cabeçalho fixo de **14 bytes**, ordem de rede (`struct "!BBBHHIHB"`).
 | 0x12 | LEAVE | sim | vazio; fluxo no cabeçalho | gestão de fluxos |
 | 0x13 | WITHDRAW | sim | `{"srv": 1}` | escolha de caminhos |
 | 0x14 | PING | não | `{"n": 12, "caminho": [{"id": 17, "t": 1731245000.123}, …]}` | teste do caminho |
+| 0x15 | SOCORRO | sim | `{}` | pedido do avô (nó com um só vizinho vivo) |
+| 0x16 | AVO | sim | `{"avos": [{"id": 17, "ip": "10.0.20.20", "porta": 5000}]}` | resposta ao SOCORRO, e de novo quando o pai muda |
 | 0x20 | DATA | não | bytes do vídeo | streaming |
 
 Os códigos 0x04 e 0x05 estão livres: eram o HELLO_ACK e o KEEPALIVE, que o HELLO periódico substituiu.
@@ -100,6 +102,29 @@ com `sair` + Enter no terminal do nó, ou com `kill <pid>` (SIGTERM).
 Na saída avisada, o nó envia `CLOSE` fiável aos vizinhos vivos e aguarda os ACKs até
 1 segundo. O recetor remove imediatamente o vizinho e o estado de fluxos associado, e deixa de
 lhe mandar HELLOs; se o aviso se perder, o vizinho é dado como em baixo pelo silêncio.
+
+## Pedido de socorro ao avô
+
+É a única exceção à regra de cada nó só conhecer os vizinhos, autorizada pelo professor. Serve
+para um nó que perde todos os vizinhos de uma vez (ex: um cliente com um só vizinho, no cenário 2).
+O pedido faz-se **antes** da falha, porque depois já não há a quem perguntar.
+
+1. **Em risco = um só vizinho vivo** (verificado de 0,25 em 0,25 s, a partir de 3 s depois do
+   registo, para os vizinhos terem tempo de se apresentar). O nó manda `SOCORRO` a esse vizinho.
+2. O vizinho responde com `AVO`: os seus pais (um por servidor), com o IP e a porta. Esses são os
+   avós de quem pediu. Guarda quem pediu e volta a mandar `AVO` sempre que um pai seu muda.
+3. Quem pediu guarda os avós **só enquanto está em risco**: se voltar a ter 2 vizinhos vivos,
+   esquece-os.
+4. **Sem nenhum vizinho vivo**, o nó apresenta-se a cada avô com HELLOs que levam
+   `"socorro": true`. O avô aceita um HELLO de um nó que não está na sua lista só com esse campo, e a
+   partir daí são vizinhos normais: trocam HELLOs, anúncios, JOIN e vídeo.
+5. Se nem o avô responder, o nó continua a tentar os vizinhos originais e o avô (HELLOs de 5 em 5 s).
+6. **Fim da exceção:** quando um vizinho original está vivo há 6 s (3 rondas de anúncios, para já
+   ter rotas por ele), quem pediu fecha a ligação ao avô com `CLOSE`. Uma ligação de emergência que
+   cai também não se repete: os dois esquecem-se. Só quem pediu fecha; o avô limita-se a aceitar.
+
+O pai só diz quem é o avô a quem lho pede e nunca o espalha; a ligação ao avô serve para refazer
+uma ligação, não para calcular rotas (as rotas continuam a vir dos anúncios).
 
 ## Gestão e encaminhamento de fluxos
 
@@ -222,7 +247,8 @@ inteiro (a soma das ligações).
 - Se não chega **nada** de um vizinho (HELLO, ACK, vídeo…) durante o **limite de silêncio**, o vizinho é dado como em baixo, as mensagens pendentes para ele são canceladas e é chamado `on_neighbor_down(id)`.
 - Limite de silêncio = **3 × o intervalo que o vizinho anunciou no HELLO**, e nunca menos do que **3 × o RTO** para ele. Com o HELLO a 1 s, dá 3 s. Os tempos ficam combinados entre cada par de vizinhos, como no BFD (multiplicador 3, o valor habitual), e numa ligação lenta o limite estica sozinho, como a regra do QUIC para o idle timeout (RFC 9000).
 - Com vídeo a passar, a falha deteta-se mais depressa pela falta de vídeo: 300 ms sem DATA do pai levam o nó a trocar de pai (ver "Anúncios e escolha do pai").
-- Medidas por vizinho, usadas no custo das rotas, tiradas dos ACK dos HELLOs: `rtt_min` (mínimo das últimas 10 amostras de RTT), `jitter` (o `rttvar` do RFC 6298) e `perda` (fração dos últimos 20 HELLOs sem ACK em 1 s; mede a ida e a volta juntas).
+- Medidas por vizinho, usadas no custo das rotas: `rtt_min` (mínimo das últimas 10 amostras de RTT, tiradas dos ACK) e `jitter` (o `rttvar` do RFC 6298).
+- `perda`: pelos **números de pacote em falta**. Como cada nó numera à parte os pacotes que manda a cada vizinho, a sequência que um vizinho recebe só tem buracos onde um pacote se perdeu. Conta-se nos últimos 200 números: todos os pacotes contam (vídeo, anúncios, HELLOs, ACKs) e mede-se só o sentido de lá para cá, que é o sentido em que o vídeo chega de um pai. Um pacote que chega fora de ordem deixa de contar como perdido; um salto de mais de 1000 números é um vizinho que reiniciou (recomeça a contar). Enquanto não houver 50 números, a perda vem dos HELLOs: a fração dos últimos 20 sem ACK em 1 s (ida e volta juntas).
 - Quando um vizinho é dado como em baixo, a memória de duplicados dele é apagada: se voltar, é uma ligação nova.
 
 ## Interface do módulo (`ott/transporte.py`)
@@ -240,7 +266,7 @@ t.send(2, Tipo.JOIN, fluxo=(1, 0), fiavel=True)
 t.send(5, Tipo.DATA, rtp_bytes, fluxo=(1, 0))  # vídeo, sem fiabilidade
 t.rtt(2)                             # RTT suavizado em segundos (ou None)
 t.rtt_min(2) / t.jitter(2)           # segundos (ou None)
-t.perda(2)                           # fração de 0 a 1 (ou None)
+t.perda(2)                           # fração de 0 a 1 (ou None): do 2 para cá, pelos números em falta
 t.neighbors / t.remove_neighbor(2) / t.close()
 
 def cb(origem, tipo, corpo, fluxo, addr): ...   # corpo: dict (controlo) ou bytes (DATA)
@@ -313,7 +339,7 @@ Os termos técnicos deste documento, em palavras simples.
 | **ACK** | Mensagem curta de "recebi o pacote nº X" (de *acknowledgement*, confirmação). |
 | **Mensagem fiável** | Mensagem que o transporte garante que chega: espera pelo ACK e, se não vier, volta a enviar. |
 | **Retransmissão** | Voltar a enviar uma mensagem cujo ACK não chegou. |
-| **Nº de pacote (pn)** | Número único de cada pacote enviado. Nunca se repete, nem quando se reenvia. |
+| **Nº de pacote (pn)** | Número de cada pacote enviado, com um contador por destino. Nunca se repete para esse destino, nem quando se reenvia. |
 | **Id da mensagem** | Número da mensagem. Fica igual nos reenvios, para o recetor reconhecer uma repetida. |
 | **Duplicado** | A mesma mensagem recebida duas vezes. Acontece quando a mensagem chegou mas o ACK se perdeu, e o emissor reenviou. |
 | **RTT** | Tempo de ida e volta (*round-trip time*): desde que se envia um pacote até chegar o ACK dele. |

@@ -20,6 +20,8 @@
 #   sudo -E bash scripts/arrancar_cenario.sh 3 --medir overlay --clientes 2   # com overlay
 #   sudo -E bash scripts/arrancar_cenario.sh 3 --medir direto --clientes 2    # sem overlay
 #   ... --duracao 90     # segundos de medição depois de todos os clientes arrancarem (60)
+#   ... --limite 3mbit   # limita a saída da eth0 do S1 (tc tbf) durante a medição; guarda as
+#                        # contagens do tc (pacotes deitados fora) em S1-tc.txt
 # Com --clientes K entram os K primeiros clientes (C1, ..., CK); por omissão, todos.
 # Sem overlay não há nós OTT: o S1 corre um Servidor.py por cliente, a enviar direto para ele.
 # Com overlay, no cenário 3 só arranca o S1 (com o vídeo 0), para comparar com o envio direto.
@@ -33,7 +35,7 @@
 set -euo pipefail
 
 uso() {
-  echo "Uso: sudo -E bash $0 2|3 [--janelas] [--medir overlay|direto] [--clientes K] [--duracao S]" >&2
+  echo "Uso: sudo -E bash $0 2|3 [--janelas] [--medir overlay|direto] [--clientes K] [--duracao S] [--limite TAXA]" >&2
   exit 1
 }
 
@@ -43,22 +45,26 @@ JANELAS=0
 MODO=normal
 K=""
 DURACAO=60
+LIMITE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --janelas) JANELAS=1; shift; continue ;;
-    --medir | --clientes | --duracao) [ $# -ge 2 ] || uso ;;
+    --medir | --clientes | --duracao | --limite) [ $# -ge 2 ] || uso ;;
     *) uso ;;
   esac
   case "$1" in
     --medir) MODO="$2" ;;
     --clientes) K="$2" ;;
     --duracao) DURACAO="$2" ;;
+    --limite) LIMITE="$2" ;;
   esac
   shift 2
 done
 case "$MODO" in normal | overlay | direto) ;; *) echo "--medir: overlay ou direto" >&2; uso ;; esac
 [[ "$DURACAO" =~ ^[1-9][0-9]*$ ]] || { echo "--duracao: um número inteiro de segundos" >&2; uso; }
 [ "$MODO" != normal ] || [ -z "$K" ] || { echo "--clientes só faz sentido com --medir" >&2; uso; }
+[ "$MODO" != normal ] || [ -z "$LIMITE" ] || { echo "--limite só faz sentido com --medir" >&2; uso; }
+[ -z "$LIMITE" ] || [[ "$LIMITE" =~ ^[0-9]+(kbit|mbit)$ ]] || { echo "--limite: ex. 3mbit ou 2500kbit" >&2; uso; }
 
 # shellcheck source=comum.sh
 source "$(dirname "$0")/comum.sh"
@@ -128,7 +134,7 @@ if [ "$MODO" != normal ]; then
   [[ "$K" =~ ^[1-9][0-9]*$ ]] && [ "$K" -le "${#CLIENTES[@]}" ] \
     || { echo "--clientes: de 1 a ${#CLIENTES[@]} no cenário $CENARIO" >&2; uso; }
   MEDIDOS=("${CLIENTES[@]:0:$K}")
-  REL="logs/medicoes/cenario$CENARIO-$MODO-${K}cli"   # relativo ao projeto, para os comandos
+  REL="logs/medicoes/cenario$CENARIO-$MODO-${K}cli${LIMITE:+-$LIMITE}"   # relativo ao projeto, para os comandos
   PASTA="$PROJ/$REL"
 fi
 
@@ -222,6 +228,12 @@ direto)
 esac
 
 # --- Medição ------------------------------------------------------------------------------------
+if [ -n "$LIMITE" ]; then
+  # tbf: deixa passar no máximo LIMITE à saída da eth0 do S1; o que não cabe fica na fila até 400 ms
+  # e depois é deitado fora (é isso que se vê como perda nos clientes).
+  dentro S1 tc qdisc replace dev eth0 root tbf rate "$LIMITE" burst 32kbit latency 400ms
+  echo "Saída da eth0 do S1 limitada a $LIMITE."
+fi
 echo "À espera de $ESPERA_VIDEO s para o vídeo chegar a todos os clientes..."
 sleep "$ESPERA_VIDEO"
 no S1 "python3 scripts/debito_interface.py eth0 --duracao $DURACAO" debito
@@ -232,6 +244,11 @@ sleep "$((DURACAO - ESPERA))"
 # apanha o processo python, e não o bash nem o xterm à volta dele.
 pkill -INT -f '^python3 player/Medidor\.py' || true
 sleep 2
+if [ -n "$LIMITE" ]; then
+  dentro S1 tc -s qdisc show dev eth0 > "$PASTA/S1-tc.txt" 2>&1 || true
+  dentro S1 tc qdisc del dev eth0 root 2>/dev/null || true
+  echo "Contagens do tc no S1 (dropped = pacotes deitados fora pelo limite): $REL/S1-tc.txt"
+fi
 
 # Cópia dos logs desta execução para a pasta da medição, sem o prefixo cenarioN- (ex: C1.log,
 # S1-debito.log). Os originais ficam em logs/, para o painel e o no.sh.

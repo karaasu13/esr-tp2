@@ -40,6 +40,8 @@ class Tipo(IntEnum):
     LEAVE = 0x12
     WITHDRAW = 0x13
     PING = 0x14
+    SOCORRO = 0x15  # pedido do avô, por um nó com um só vizinho vivo
+    AVO = 0x16  # resposta: o(s) pai(s) de quem responde, com o endereço
     DATA = 0x20
 
 
