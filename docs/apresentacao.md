@@ -70,6 +70,12 @@ tirar: `tc qdisc del dev eth0 root`. (A `eth0` de um PC leva todas as ligações
 (o tempo de os vizinhos do S1 darem pelo silêncio e a rota para o S1 desaparecer). (Problema conhecido:
 a imagem pode ficar parada cerca de 2 s, porque os dois servidores vão em frames diferentes.)
 
+**Um cliente desiste.** Fechar a janela do player do C1: o nó do C1 deixa de pedir o vídeo
+(`o player fechou: deixo de pedir o vídeo …`) e o pai tira-o dos destinos. Se era o último a
+ver por esse ramo, o tráfego para nesse ramo. O nó continua a correr (e a reencaminhar).
+
+**Um leitor de vídeo morre.** Matar só o `Servidor.py` do S1: o nó volta a arrancá-lo 1 s depois.
+
 **Pedido de socorro ao avô.** `Ctrl+C` no N3: o C1 fica só com o N1 e pede-lhe o avô
 (`avô guardado (via 13): 17 …`). Depois, `Ctrl+C` no N1: o C1 liga-se ao S1 (`pede socorro ao avô 17`) e o
 vídeo volta direto do S1. Voltar a arrancar o N1: 6 s depois, o C1 fecha a ligação ao S1.

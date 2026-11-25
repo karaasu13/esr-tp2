@@ -163,13 +163,21 @@ As quatro medidas vão em separado e cada nó aplica a fórmula do custo, que es
 (`custo()` em `ott/rotas.py`). Para mudar os pesos não é preciso mudar o formato da mensagem:
 
 ```
-custo = rtt (ms) + jitter (ms) + 20 × perda (%) + saltos
+custo = rtt (ms) + jitter (ms) + 100 × perda (%) + saltos
 ```
 
-Como é uma soma, serve para uma ligação (`rtt_min + jitter + 20 × perda + 1`) e para o caminho
+O peso 100 da perda: como o vídeo não é reenviado, perder 1% dos pacotes estraga mais o
+vídeo do que 100 ms de atraso (com 1% de perda por pacote IP perdem-se cerca de 6% dos frames,
+porque cada frame vai em cerca de 6 fragmentos). Começou em 20; o professor sugeriu 100.
+
+Como é uma soma, serve para uma ligação (`rtt_min + jitter + 100 × perda + 1`) e para o caminho
 inteiro (a soma das ligações).
 
 - O nó com `--servidor` envia um `ANNOUNCE` a todos os vizinhos de 2 em 2 s (±10% ao acaso).
+  Só anuncia os vídeos que estão a chegar do `Servidor.py` local: um vídeo que já mandou frames e
+  está calado há mais de 2 s (o leitor morreu) sai da lista, e os clientes dele passam para o
+  outro servidor; quando os frames voltam, volta a ser anunciado. No arranque à mão, o nó volta a
+  arrancar sozinho um `Servidor.py` que morra (1 s depois).
 - Quem recebe só aceita anúncios de vizinhos confirmados. Deita fora rondas mais antigas do que
   a última desse vizinho para esse servidor e anúncios com mais de 16 saltos.
 - Guarda o último anúncio de cada vizinho, por servidor, já somadas as medidas da ligação a esse
@@ -239,7 +247,9 @@ inteiro (a soma das ligações).
   - Como o id da mensagem se mantém, o recetor deteta duplicados quando foi o ACK que se perdeu. Volta a enviar ACK, mas não entrega a mensagem outra vez. **Entrega exatamente uma vez.**
 - RTO = `srtt + 4·rttvar` (RFC 6298), com mínimo de 0,2 s. Antes da 1.ª medição é 0,5 s. Duplica a cada tentativa até um máximo de 2 s.
 - Para um **vizinho**, retransmite-se até haver ACK ou até o idle timeout o dar como em baixo (a mensagem é então cancelada). ACKs perdidos não chegam para dar um vizinho como morto: no CORE, com 20% de perda, isso deu um falso alarme.
-- Para quem **não é vizinho** (ex: o bootstrapper), desiste-se ao fim de **5 tentativas**.
+- Para quem **não é vizinho** (ex: o bootstrapper), desiste-se ao fim de **5 tentativas**. No arranque
+  à mão, o nó volta a mandar o REGISTER de 5 em 5 s até o bootstrapper responder: pode arrancar antes
+  dele, ou voltar a entrar depois de ele ter caído.
 - O RTT é atualizado com médias móveis exponenciais (`srtt ← 7/8·srtt + 1/8·amostra`), como no TCP e no QUIC.
 
 ## Vizinhos vivos (limite de silêncio)

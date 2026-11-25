@@ -8,6 +8,8 @@ Recebe pacotes RTP por UDP e mostra cada frame (JPEG). Alterações ao original:
 - escreve no stdout (que os scripts do CORE guardam no log) um resumo de 5 em 5 s e cada
   paragem do vídeo (mais de 200 ms sem frame novo), com a hora;
 - tkMessageBox (Python 2) trocado por tkinter.messagebox;
+- um nº de frame que recua muito (troca para um servidor desfasado, ou vídeo que recomeça) não é
+  tratado como atrasado: o player continua a partir daí, em vez de ficar parado até apanhar;
 - uma faixa no topo da janela com o nome do cliente (ex: C1), cada um com a sua cor, para se
   saber qual é qual com vários players abertos.
 """
@@ -25,7 +27,7 @@ from tkinter import Button, Frame, Label, E, N, S, W
 
 from PIL import Image, ImageTk
 
-from RtpPacket import RtpPacket, avanco_seq
+from RtpPacket import RtpPacket, avanco_seq, recomecou
 
 ATUALIZAR_MS = 20  # de quanto em quanto tempo a janela vai buscar o último frame
 RESUMO_S = 5  # de quanto em quanto tempo escreve o resumo no log
@@ -113,12 +115,15 @@ class ClienteGUI:
             rtp.decode(data)
             seq = rtp.seqNum()
             paragem = None
+            recuo = None
             with self.lock:
                 if self.ultimo_seq is None:  # 1.º frame
                     avanco = 1
                     self.frameNbr = seq - 1
                 else:
                     avanco = avanco_seq(seq, self.ultimo_seq)
+                    if recomecou(avanco):  # outro servidor ou o vídeo recomeçou: segue daqui
+                        recuo, avanco = -avanco, 1
                 # descarta pacotes atrasados, como o original, mas aceita a volta 65535 -> 0
                 if avanco > 0:
                     agora = time.monotonic()
@@ -134,6 +139,9 @@ class ClienteGUI:
                     self.ultimo_frame = rtp.getPayload()
                 else:
                     self.atrasados += 1
+            if recuo:
+                registar(f"o nº do frame recuou {recuo} (outro servidor ou o vídeo recomeçou): "
+                         "continua a partir daqui")
             if paragem:
                 segundos, antes, depois, atrasados = paragem
                 registar(f"{segundos * 1000:.0f} ms sem frame novo (frame {antes} → {depois}: "

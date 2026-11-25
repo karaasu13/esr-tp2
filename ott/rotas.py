@@ -42,6 +42,9 @@ MAX_SALTOS = 16  # rede de segurança contra ciclos
 RTT_DESCONHECIDO_MS = 100.0  # RTT de uma ligação ainda sem medições
 MARGEM_RELATIVA = 0.15  # só troca por um vizinho melhor se ganhar mais de 15%...
 MARGEM_ABSOLUTA = 2.0  # ...e mais de 2 unidades de custo
+CASTIGO = 30.0  # s em que um vizinho que falhou como pai só volta a sê-lo se não houver outro
+PESO_PERDA = 100  # cada 1% de perda vale 100 ms: sem retransmissão do vídeo, a perda pesa muito
+# (o professor achou a fórmula elegante e sugeriu 100 em vez dos 20 iniciais, no checkpoint de 24/11)
 
 # Chamado com (servidor, novo pai ou None) sempre que o pai de um servidor muda.
 AoMudarPai = Callable[[int, "int | None"], None]
@@ -50,7 +53,7 @@ AoMudarPai = Callable[[int, "int | None"], None]
 def custo(rtt_ms: float, jitter_ms: float, perda_pct: float, saltos: int) -> float:
     """A fórmula do custo (secção 6 do desenho). Serve para uma ligação e para um caminho
     inteiro, porque é uma soma: o custo do caminho é a soma dos custos das ligações."""
-    return rtt_ms + jitter_ms + 20 * perda_pct + saltos
+    return rtt_ms + jitter_ms + PESO_PERDA * perda_pct + saltos
 
 
 def melhor_pela_margem(novo: float, atual: float) -> bool:
@@ -105,6 +108,11 @@ class Rotas:
         self.transporte = transporte
         self.ao_mudar_pai = ao_mudar_pai
         self.servidores: dict[int, RotaServidor] = {}
+        # Amortecimento (a ideia do route flap damping do BGP, RFC 2439, em simples): um vizinho que
+        # falhou como pai fica castigado durante CASTIGO s. Nesse tempo não se troca para ele por
+        # ser melhor, e numa falha só é escolhido se não houver outro viável. Assim uma ligação que
+        # liga e desliga não faz os nós abaixo dela mudar de caminho a cada volta.
+        self._castigo: dict[int, float] = {}  # vizinho -> até quando está castigado
 
     def pai(self, servidor: int) -> int | None:
         rota = self.servidores.get(servidor)
@@ -115,11 +123,13 @@ class Rotas:
         rota = self.servidores.get(servidor)
         return rota.anuncios.get(rota.pai) if rota and rota.pai is not None else None
 
-    async def anunciar_servidor(self, videos: list[int]) -> None:
-        """Ciclo do nó com servidor local: anuncia-se a todos os vizinhos até ser cancelado."""
+    async def anunciar_servidor(self, videos: "list[int] | Callable[[], list[int]]") -> None:
+        """Ciclo do nó com servidor local: anuncia-se a todos os vizinhos até ser cancelado.
+        `videos` pode ser uma função, chamada a cada anúncio (os vídeos que estão a chegar)."""
         ronda = int(time.time())  # um servidor que reinicia anuncia logo rondas mais altas
         while True:
-            self._enviar({"srv": self.transporte.id, "ronda": ronda, "videos": videos,
+            lista = videos() if callable(videos) else videos
+            self._enviar({"srv": self.transporte.id, "ronda": ronda, "videos": lista,
                           "rtt": 0.0, "jitter": 0.0, "perda": 0.0, "saltos": 0}, exceto=None)
             ronda += 1
             await asyncio.sleep(PERIODO_ANUNCIO * random.uniform(1 - VARIACAO_ANUNCIO,
@@ -151,7 +161,7 @@ class Rotas:
 
         if rota.pai is None:
             # Sem pai: só serve um vizinho viável (em geral, um que já tenha uma ronda mais nova).
-            candidatos = [v for v, a in rota.anuncios.items() if rota.viavel(a)]
+            candidatos = self._preferir([v for v, a in rota.anuncios.items() if rota.viavel(a)])
             if candidatos:
                 self._escolher_pai(srv, rota, candidatos, "")
         elif not self._trocar_se_melhor(srv, rota) and origem == rota.pai:
@@ -170,7 +180,7 @@ class Rotas:
         atual = rota.anuncios[rota.pai]
         melhores = [v for v, a in rota.anuncios.items()
                     if v != rota.pai and a.ronda == atual.ronda and rota.viavel(a)
-                    and melhor_pela_margem(a.custo, atual.custo)]
+                    and melhor_pela_margem(a.custo, atual.custo) and not self._castigado(v)]
         if not melhores:
             return False
         antigo = rota.pai
@@ -197,14 +207,18 @@ class Rotas:
         if rota is None or rota.pai is None:
             return
         antigo = rota.pai
-        candidatos = [v for v, a in rota.anuncios.items() if v != antigo and rota.viavel(a)]
+        candidatos = self._preferir(
+            [v for v, a in rota.anuncios.items() if v != antigo and rota.viavel(a)])
         if candidatos:
+            self._castigar(antigo, "sem vídeo")
             del rota.anuncios[antigo]  # como na queda: volta a contar com o próximo anúncio dele
             self._escolher_pai(srv, rota, candidatos,
                                f"{segundos * 1000:.0f} ms sem vídeo de {antigo}")
 
     def vizinho_em_baixo(self, no: int) -> None:
         """Esquece os anúncios do vizinho; se era o pai, passa logo a outro."""
+        if any(rota.pai == no for rota in self.servidores.values()):
+            self._castigar(no, "em baixo")
         for srv, rota in list(self.servidores.items()):
             rota.anuncios.pop(no, None)
             if rota.pai == no:
@@ -222,9 +236,23 @@ class Rotas:
             if not rota.anuncios and (velhos or rota.atualizada < limite):
                 del self.servidores[srv]
 
+    def _castigado(self, vizinho: int) -> bool:
+        return self._castigo.get(vizinho, 0.0) > time.monotonic()
+
+    def _castigar(self, vizinho: int, motivo: str) -> None:
+        if not self._castigado(vizinho):
+            log.info("[%s] o pai %s falhou (%s): durante %g s só volta a ser pai se não houver "
+                     "outro", self.transporte.id, vizinho, motivo, CASTIGO)
+        self._castigo[vizinho] = time.monotonic() + CASTIGO
+
+    def _preferir(self, candidatos: list[int]) -> list[int]:
+        """Os candidatos sem castigo; se forem todos castigados, todos (antes um pai do que nenhum)."""
+        bons = [v for v in candidatos if not self._castigado(v)]
+        return bons or candidatos
+
     def _trocar_pai(self, srv: int, rota: RotaServidor, motivo: str) -> None:
         """O pai deixou de servir: fica o mais barato dos vizinhos viáveis, se houver."""
-        candidatos = [v for v, a in rota.anuncios.items() if rota.viavel(a)]
+        candidatos = self._preferir([v for v, a in rota.anuncios.items() if rota.viavel(a)])
         self._escolher_pai(srv, rota, candidatos, motivo)
         if rota.pai is None:  # sem reserva: quem recebe através deste nó procura já outro pai
             for vizinho in self.transporte.neighbors:

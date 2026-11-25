@@ -9,7 +9,7 @@ from pathlib import Path
 PLAYER = Path(__file__).resolve().parent.parent / "player"
 sys.path.insert(0, str(PLAYER))
 try:
-    from RtpPacket import RtpPacket, avanco_seq
+    from RtpPacket import RtpPacket, avanco_seq, recomecou
     try:
         from ClienteGUI import ClienteGUI
     except ImportError:  # sem Tkinter ou Pillow
@@ -36,6 +36,13 @@ class TestSeqRtp(unittest.TestCase):
         self.assertEqual(avanco_seq(13, 10), 3)  # perderam-se 2 frames
         self.assertEqual(avanco_seq(10, 10), 0)  # repetido
         self.assertLess(avanco_seq(9, 10), 0)    # atrasado
+
+    def test_recuo_grande_e_um_recomeco_e_nao_um_atraso(self):
+        self.assertFalse(recomecou(avanco_seq(9, 10)))      # 1 frame atrasado: deita-se fora
+        self.assertFalse(recomecou(avanco_seq(990, 1000)))  # 10 atrás: ainda é um atraso
+        self.assertTrue(recomecou(avanco_seq(960, 1000)))   # 40 atrás: o outro servidor vai atrás
+        self.assertTrue(recomecou(avanco_seq(0, 5000)))     # o vídeo recomeçou do início
+        self.assertFalse(recomecou(avanco_seq(1040, 1000)))  # para a frente nunca é recomeço
 
     def test_avanco_na_volta(self):
         self.assertEqual(avanco_seq(0, 65535), 1)

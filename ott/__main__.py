@@ -28,6 +28,8 @@ RENOVACAO_JOIN = 2.0
 VALIDADE_DESTINO = 6.0
 PERIODO_PING = 5.0
 SEM_VIDEO = 0.3  # s sem DATA do pai num fluxo ativo (6 frames a 20 por segundo): procurar outro pai
+INSISTIR_REGISTO = 5.0  # s entre tentativas de registo, no arranque à mão (o bootstrapper pode faltar)
+SEM_LEITOR = 2.0  # s sem frames do Servidor.py local (depois de já ter mandado): deixa de anunciar o vídeo
 # s que um pai novo tem para começar a enviar, depois de uma troca num fluxo que já tinha vídeo. Se
 # não enviar (ex: também recebia através do nó que falhou), procura-se outro pai. Chega para o JOIN
 # subir alguns saltos e o vídeo descer, mesmo com centenas de ms de atraso por ligação.
@@ -121,6 +123,8 @@ class NoOTT:
         self._teve_video: set[tuple[int, int]] = set()
         self._pai_novo_desde: dict[tuple[int, int], float] = {}
         self._em_encerramento = False
+        self._ultimo_local: dict[int, float] = {}  # vídeo -> último frame do Servidor.py local
+        self._videos_parados: set[int] = set()  # vídeos locais que deixaram de chegar
         # Pedido de socorro ao avô
         self._registado_em = 0.0
         self._em_risco: int | None = None  # o único vizinho vivo, a quem se pediu o avô
@@ -136,20 +140,29 @@ class NoOTT:
         """Vizinhos vivos: os dois já se ouvem."""
         return {no for no, ev in self._vizinhos_estado.items() if ev.estado == "vivo"}
 
-    async def start(self, timeout: float = 15) -> None:
+    async def start(self, timeout: float = 15, insistir: bool = False) -> None:
+        """Regista-se no bootstrapper. Sem resposta em `timeout` s: erro, ou, com `insistir`
+        (o arranque à mão), volta a tentar de INSISTIR_REGISTO em INSISTIR_REGISTO s para sempre,
+        para o nó poder arrancar antes do bootstrapper ou sobreviver a ele ter caído."""
         self._registo = asyncio.get_running_loop().create_future()
         await self.transporte.start(self.host, self.porta)
         await self.video.start()
         self.transporte.set_address(0, self.endereco_bootstrapper)
-        self.transporte.register()
-        try:
-            await asyncio.wait_for(self._registo, timeout)
-        except asyncio.TimeoutError as exc:
-            self.close()
-            raise RuntimeError(
-                f"sem resposta do bootstrapper {self.endereco_bootstrapper[0]}:"
-                f"{self.endereco_bootstrapper[1]} após {timeout:g} segundos"
-            ) from exc
+        endereco = f"{self.endereco_bootstrapper[0]}:{self.endereco_bootstrapper[1]}"
+        while True:
+            self.transporte.register()
+            espera = INSISTIR_REGISTO if insistir else timeout
+            try:
+                await asyncio.wait_for(asyncio.shield(self._registo), espera)
+                break
+            except asyncio.TimeoutError as exc:
+                if not insistir:
+                    self.close()
+                    raise RuntimeError(
+                        f"sem resposta do bootstrapper {endereco} após {timeout:g} segundos"
+                    ) from exc
+                log.warning("sem resposta do bootstrapper %s: volto a tentar daqui a %g s",
+                            endereco, INSISTIR_REGISTO)
         self._iniciar_tarefas_aplicacao()
 
     async def run(self) -> None:
@@ -256,6 +269,7 @@ class NoOTT:
     # ------------------------------------------------------------ vídeo
     def _frame_do_servidor(self, stream: int, rtp: bytes) -> None:
         """Pacote RTP vindo do Servidor.py local: passa a ser o fluxo (meu ID, stream)."""
+        self._ultimo_local[stream] = time.monotonic()
         if not self._registado:
             return  # ainda sem ID, não há fluxo para nomear
         fluxo = (self.transporte.id, stream)
@@ -465,6 +479,36 @@ class NoOTT:
                      melhor, opcoes[melhor], "" if atual is None else f", antes {atual}")
             self.pedir_video((melhor, video))
 
+    def _videos_a_anunciar(self) -> list[int]:
+        """Os vídeos do servidor local que se anunciam: todos, menos os que já mandaram frames e
+        se calaram há mais de SEM_LEITOR s (o Servidor.py morreu). Os clientes desse vídeo passam
+        para o outro servidor; quando os frames voltam, o vídeo volta a ser anunciado."""
+        agora = time.monotonic()
+        videos = []
+        for k in range(len(self.video.portas_pedidas)):
+            ultimo = self._ultimo_local.get(k)
+            parado = ultimo is not None and agora - ultimo > SEM_LEITOR
+            if parado and k not in self._videos_parados:
+                log.warning("[%s] vídeo %d: o servidor local deixou de mandar frames; deixo de o "
+                            "anunciar", self.transporte.id, k)
+            elif not parado and k in self._videos_parados:
+                log.info("[%s] vídeo %d: o servidor local voltou; volto a anunciá-lo",
+                         self.transporte.id, k)
+            (self._videos_parados.add if parado else self._videos_parados.discard)(k)
+            if not parado:
+                videos.append(k)
+        return videos
+
+    def parar_de_ver(self) -> None:
+        """O player local fechou: deixa de pedir os vídeos (LEAVE se ninguém mais os quiser)."""
+        fluxos = sorted(self.fluxos_player)
+        self.videos_pedidos.clear()
+        self._servidor_do_video.clear()
+        for fluxo in fluxos:
+            self.desistir_video(fluxo)
+        log.info("[%s] o player fechou: deixo de pedir o vídeo %s", self.transporte.id,
+                 ", ".join(str(f) for f in fluxos) or "(nenhum)")
+
     def _estado_fluxo(self, fluxo: tuple[int, int]) -> FluxoVideo:
         estado = self.tabela_fluxos.get(fluxo)
         if estado is None:  # fluxo novo: herda o pai já escolhido para o servidor
@@ -603,9 +647,8 @@ class NoOTT:
             asyncio.create_task(self._ciclo_ping()),
         ]
         if self.video.portas_pedidas:
-            videos = list(range(len(self.video.portas_pedidas)))
             self._tarefas_aplicacao.append(
-                asyncio.create_task(self.rotas.anunciar_servidor(videos)))
+                asyncio.create_task(self.rotas.anunciar_servidor(self._videos_a_anunciar)))
 
     async def _ciclo_fluxos(self) -> None:
         while True:
@@ -953,11 +996,11 @@ async def correr(no: NoOTT, videos: list, abrir_player: bool, nome: str,
         loop.add_reader(sys.stdin.fileno(), ler_comando)
     locais = ProgramasLocais(nome, escrever)
     try:
-        await no.start()
+        await no.start(insistir=True)
         if videos:
             await locais.servidores(videos)
         if abrir_player:
-            await locais.player(no.transporte.id)
+            await locais.player(no.transporte.id, ao_fechar=no.parar_de_ver)
         log.info("para sair avisando os vizinhos: 'sair' + Enter; Ctrl+C mata o nó sem avisar")
         await sair.wait()
         log.info("a sair: avisa os vizinhos (CLOSE)")

@@ -13,6 +13,16 @@ def avanco_seq(novo, ultimo):
 	return dif if dif < SEQ_MOD // 2 else dif - SEQ_MOD
 
 
+# Um nº de sequência que recua mais do que isto (1 s de vídeo a 20 frames/s) não é um pacote
+# atrasado: é outro servidor (desfasado do primeiro) ou o vídeo a recomeçar do início.
+RECOMECO = 20
+
+
+def recomecou(avanco):
+	"""O `avanco` (de avanco_seq) é um recuo grande: o player deve continuar a partir daí."""
+	return avanco <= -RECOMECO
+
+
 TS_MOD = 1 << 32  # o campo timestamp do RTP tem 32 bits
 
 
