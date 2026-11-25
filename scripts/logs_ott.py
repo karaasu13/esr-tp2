@@ -1,6 +1,10 @@
-"""Lê os logs de um cenário (logs/cenarioN-*.log) e reconstrói o estado da rede: estado de cada
-nó, vizinhos, pais, fluxos, caminho de cada cliente e os acontecimentos, tudo com os nomes dos
-nós. É usado pelo painel (scripts/painel.py) e pelo desenho da árvore (scripts/arvore.py).
+"""Lê os logs de um cenário e reconstrói o estado da rede: estado de cada nó, vizinhos, pais,
+fluxos, caminho de cada cliente e os acontecimentos, tudo com os nomes dos nós. É usado pelo
+painel (scripts/painel.py) e pelo desenho da árvore (scripts/arvore.py).
+
+Os logs vêm de um de dois sítios, o mais recente: os do script de arranque (logs/cenarioN-*.log)
+ou os que cada nó arrancado à mão numa shell do CORE escreve sozinho
+(logs/core-<sessão>/<nó>.log e <nó>-player.log).
 
 Só lê ficheiros: não fala com os nós. É uma ferramenta de teste, que corre fora do overlay, por
 isso nenhum nó fica a conhecer a árvore por causa dela.
@@ -157,12 +161,50 @@ def ler(ficheiro: Path, ate: str | None = None) -> list[Registo]:
     return registos
 
 
+def sessao_manual() -> Path | None:
+    """A pasta logs/core-<sessão> mais recente (os logs dos nós arrancados à mão), ou None."""
+    pastas = [p for p in LOGS.glob("core-*") if p.is_dir()]
+    return max(pastas, key=lambda p: p.stat().st_mtime) if pastas else None
+
+
+def _mais_recente(ficheiros) -> float:
+    return max((f.stat().st_mtime for f in ficheiros), default=0.0)
+
+
+def ficheiros(cenario: str) -> list[tuple[Path, list[str]]]:
+    """Os logs a ler, com o nome do nó e o sufixo de cada um: os do script ou os da sessão à mão,
+    conforme os mais recentes."""
+    do_script = sorted(LOGS.glob(f"cenario{cenario}-*.log"))
+    pasta = sessao_manual()
+    a_mao = sorted(pasta.glob("*.log")) if pasta else []
+    if a_mao and _mais_recente(a_mao) > _mais_recente(do_script):
+        return [(f, f.stem.split("-")) for f in a_mao]  # core-1/C1-player -> ["C1", "player"]
+    return [(f, f.stem.split("-")[1:]) for f in do_script]  # cenario3-C1-player -> ["C1", "player"]
+
+
+def cenario_atual() -> str | None:
+    """O cenário a ler: o do script (logs/.cenario_atual) ou, se os logs mais recentes forem de
+    nós arrancados à mão, o cenário cuja topologia tem todos esses nós."""
+    try:
+        do_script = (LOGS / ".cenario_atual").read_text().strip()
+    except OSError:
+        do_script = None
+    pasta = sessao_manual()
+    a_mao = sorted(pasta.glob("*.log")) if pasta else []
+    if a_mao and _mais_recente(a_mao) > _mais_recente(LOGS.glob(f"cenario{do_script}-*.log")):
+        nomes = {f.stem.split("-")[0] for f in a_mao}
+        for cenario in ("3", "2", "1"):
+            topo = topologia.ler(cenario)
+            if topo and nomes <= set(topo.maquinas):
+                return cenario
+    return do_script
+
+
 def carregar(cenario: str, ate: str | None = None):
     """{nó: registos do nó overlay} e {nó: registos do player}."""
     principais, players = {}, {}
-    for f in sorted(LOGS.glob(f"cenario{cenario}-*.log")):
-        partes = f.stem.split("-")[1:]  # cenario3-C1-player -> ["C1", "player"]
-        if not partes:
+    for f, partes in ficheiros(cenario):
+        if not partes or not partes[0]:
             continue
         nome, sufixo = partes[0], (partes[1] if len(partes) > 1 else "")
         if sufixo == "player":

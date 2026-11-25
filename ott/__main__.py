@@ -10,6 +10,7 @@ import random
 import signal
 import socket
 import sys
+from pathlib import Path
 from dataclasses import dataclass, field
 import time
 from typing import Sequence
@@ -18,7 +19,7 @@ from .protocolo import PORTA, Tipo, nome_tipo
 from . import rotas as modulo_rotas
 from .rotas import Rotas, melhor_pela_margem
 from .transporte import Endereco, Transporte
-from .locais import ProgramasLocais, ficheiro_video
+from .locais import PROJETO, ProgramasLocais, ficheiro_video
 from .video import LOCALHOST, PORTA_PLAYER, PORTA_SERVIDOR, PontaVideo
 
 log = logging.getLogger("ott")
@@ -735,10 +736,33 @@ def nome_do_no() -> str:
     return nome.replace("%", "").strip()
 
 
+def sessao_core(nome: str) -> str | None:
+    """Número da sessão do CORE em que este nó corre: a /tmp/pycore.<n> que tem a pasta <nó>.conf.
+    No CORE, os nós partilham o disco do PC, por isso isto também se vê de dentro de um nó."""
+    candidatas = [p for p in Path("/tmp").glob("pycore.*") if (p / f"{nome}.conf").is_dir()]
+    if not candidatas:
+        return None
+    return max(candidatas, key=lambda p: p.stat().st_mtime).name.split(".", 1)[1]
+
+
+def ficheiro_de_log(nome: str, pedido: str | None) -> Path | None:
+    """Onde o nó guarda também o seu log, para o painel o ler (python3 scripts/painel.py).
+
+    --log FICHEIRO ganha a tudo. Arrancado à mão numa shell do CORE: logs/core-<sessão>/<nó>.log.
+    Com a saída já a ir para um ficheiro (o arrancar_cenario.sh faz isso), não escreve outro."""
+    if pedido:
+        return Path(pedido)
+    if not nome or not sys.stderr.isatty():
+        return None
+    sessao = sessao_core(nome)
+    return None if sessao is None else PROJETO / "logs" / f"core-{sessao}" / f"{nome}.log"
+
+
 COMANDOS_SAIR = ("sair", "q")
 
 
-async def correr(no: NoOTT, videos: list, abrir_player: bool, nome: str) -> None:
+async def correr(no: NoOTT, videos: list, abrir_player: bool, nome: str,
+                 log_player: Path | None = None) -> None:
     """Arranca o nó e, depois do registo, os programas locais (servidores de vídeo e player).
 
     Duas formas de fechar o nó:
@@ -746,6 +770,15 @@ async def correr(no: NoOTT, videos: list, abrir_player: bool, nome: str) -> None
       Os vizinhos dão por isso pela falta de vídeo ou pelo silêncio dos HELLOs.
     * 'sair' + Enter no terminal do nó, ou `kill <pid>` (SIGTERM): saída avisada, com CLOSE.
     Os programas que o nó arrancou morrem com ele nos dois casos (ver ott/locais.py)."""
+    def escrever(linha: str) -> None:  # linhas do player: no terminal e, se houver, no ficheiro
+        print(linha, flush=True)
+        if log_player is not None:
+            try:
+                with log_player.open("a", encoding="utf-8") as f:
+                    f.write(linha + "\n")
+            except OSError:
+                pass
+
     loop = asyncio.get_running_loop()
     sair = asyncio.Event()
 
@@ -768,7 +801,7 @@ async def correr(no: NoOTT, videos: list, abrir_player: bool, nome: str) -> None
     loop.add_signal_handler(signal.SIGTERM, sair.set)
     if sys.stdin.isatty():
         loop.add_reader(sys.stdin.fileno(), ler_comando)
-    locais = ProgramasLocais(nome)
+    locais = ProgramasLocais(nome, escrever)
     try:
         await no.start()
         if videos:
@@ -810,6 +843,9 @@ def main() -> None:
                         help="vídeo a pedir e mostrar: 'k' ao servidor mais barato, "
                              "'servidor:k' a esse servidor; ex: 0 ou 1:0. Sem --player, o nó abre "
                              "o player sozinho")
+    parser.add_argument("--log", metavar="FICHEIRO",
+                        help="guarda também o log neste ficheiro (por omissão, numa shell do CORE: "
+                             "logs/core-<sessão>/<nó>.log, que o scripts/painel.py lê)")
     args = parser.parse_args()
     try:
         ip_boot, porta_boot = endereco_bootstrapper(args.ip_bootstrapper, args.porta)
@@ -825,11 +861,23 @@ def main() -> None:
 
     # O nome do nó vai em cada linha do log (no CORE, o nome da máquina é o do nó: N1, C1, ...).
     nome = nome_do_no()
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s.%(msecs)03d " + (f"{nome} " if nome else "") + "%(levelname)s %(message)s",
-        datefmt="%H:%M:%S",
-    )
+    formato = logging.Formatter(
+        "%(asctime)s.%(msecs)03d " + (f"{nome} " if nome else "") + "%(levelname)s %(message)s",
+        datefmt="%H:%M:%S")
+    logging.basicConfig(level=logging.INFO)
+    logging.getLogger().handlers[0].setFormatter(formato)
+    ficheiro = ficheiro_de_log(nome, args.log)
+    log_player = None
+    if ficheiro is not None:
+        try:
+            ficheiro.parent.mkdir(parents=True, exist_ok=True)
+            guardar = logging.FileHandler(ficheiro, encoding="utf-8")
+            guardar.setFormatter(formato)
+            logging.getLogger().addHandler(guardar)
+            log_player = ficheiro.with_name(f"{ficheiro.stem}-player.log")
+            log.info("log guardado em %s", ficheiro)
+        except OSError as exc:
+            log.warning("não consegui guardar o log em %s: %s", ficheiro, exc)
     try:
         fluxos, videos_pedidos = set(), set()
         for v in args.ver:
@@ -850,7 +898,7 @@ def main() -> None:
                    player=None if porta_player is None else (LOCALHOST, porta_player))
         no.fluxos_player = fluxos
         no.videos_pedidos = videos_pedidos
-        asyncio.run(correr(no, videos, abrir_player, nome))
+        asyncio.run(correr(no, videos, abrir_player, nome, log_player))
         log.info("nó OTT terminado")
     except KeyboardInterrupt:  # Ctrl+C antes de o ciclo do nó arrancar
         log.info("nó OTT terminado")

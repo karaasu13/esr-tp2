@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Painel do cenário: lê os logs dos nós (logs/cenarioN-*.log) e mostra, de 2 em 2 s, por onde
-passa cada vídeo (a árvore), o que cada cliente está a ver, o estado de cada nó e os últimos
-acontecimentos, sempre com os nomes dos nós.
+"""Painel do cenário: lê os logs dos nós e mostra, de 2 em 2 s, por onde passa cada vídeo (a
+árvore), o que cada cliente está a ver, o estado de cada nó e os últimos acontecimentos, sempre
+com os nomes dos nós. Os logs são os do script (logs/cenarioN-*.log) ou, se forem mais recentes,
+os dos nós arrancados à mão (logs/core-<sessão>/), que cada nó escreve sozinho.
 
     python3 scripts/painel.py                  # cenário que está a correr; atualiza sozinho (Ctrl+C sai)
     python3 scripts/painel.py 3                # cenário 3
@@ -223,10 +224,7 @@ def desenhar(cenario: str, ate: str | None, tinta: Tinta, largura: int, altura: 
 
 
 def cenario_atual() -> str | None:
-    try:
-        return (L.LOGS / ".cenario_atual").read_text().strip()
-    except OSError:
-        return None
+    return L.cenario_atual()  # o do script, ou o dos nós arrancados à mão (logs/core-*/)
 
 
 def main() -> None:

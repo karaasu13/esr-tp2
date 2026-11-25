@@ -35,10 +35,7 @@ LARGURA_LEGENDA = 230
 
 
 def cenario_atual() -> str | None:
-    try:
-        return (L.LOGS / ".cenario_atual").read_text().strip()
-    except OSError:
-        return None
+    return L.cenario_atual()  # o do script, ou o dos nós arrancados à mão (logs/core-*/)
 
 
 def posicoes(estado: L.Estado) -> dict[str, tuple[float, float]]:
