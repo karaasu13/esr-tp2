@@ -14,7 +14,8 @@ Grupo: George, Inês, Pedro
 | `player/` | Servidor e player de vídeo (adaptados do ProgEx) e o medidor. Correm à parte e falam com o nó local por UDP em localhost |
 | `configs/` | JSON do bootstrapper, um por cenário (IP → número do nó, e as ligações) |
 | `topologias/` | Topologias do CORE, uma por cenário (`cenario1.xml` a `cenario3.xml`) |
-| `scripts/` | Arranque dos cenários, painel, `no.sh` (mexer em nós e ligações), testes do HELLO e análise das medições |
+| `rede` | Atalhos para os testes no CORE: `./rede start 3`, `./rede kill N1`, `./rede cut C1 N1`, `./rede painel`, ... (`./rede help`) |
+| `scripts/` | Arranque dos cenários, painel, desenho da árvore, `no.sh` (mexer em nós e ligações), testes do HELLO e análise das medições |
 | `videos/` | Os 2 vídeos de teste |
 | `docs/` | Documentação (tabela abaixo) |
 | `tests/` | Testes automáticos (`python3 -m unittest`) |
@@ -55,8 +56,8 @@ Em Debian/Ubuntu o `ImageTk` vem num pacote à parte (`python3-pil.imagetk`): s�
 ## Como correr
 
 ```
-python3 -m unittest -v                                   # testes automáticos
-sudo -E bash scripts/arrancar_cenario.sh 3               # cenário 3 inteiro no CORE (depois do Start)
+python3 -m unittest -v      # testes automáticos
+./rede start 3              # cenário 3 inteiro no CORE (depois do Start); ./rede help para o resto
 ```
 
 Cada nó à mão, com um só comando (o nó arranca sozinho os servidores de vídeo e o player):
