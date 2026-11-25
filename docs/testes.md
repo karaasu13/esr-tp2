@@ -14,32 +14,54 @@ cenário estão em [`enderecos.md`](enderecos.md).
 Depois de abrir a topologia no CORE e carregar em Start, na máquina (fora do CORE):
 
 ```bash
-xhost +SI:localuser:root                       # uma vez por sessão gráfica
-sudo -E bash scripts/arrancar_cenario.sh 3     # ou 2
+xhost +SI:localuser:root      # uma vez por sessão gráfica
+./rede start 3                # ou 2; é o mesmo que: sudo -E bash scripts/arrancar_cenario.sh 3
 ```
 
-O script espera que os routers já encaminhem e arranca o bootstrapper, os nós, os players e por fim os servidores (para o 1.º anúncio já encontrar as ligações feitas). Os programas correm sem janela: cada um escreve em `logs/cenarioN-<nó>[-<programa>].log`, com o nome do nó em cada linha. Abrem-se só as janelas dos players (com o nome do nó no título) e um painel. Com `--janelas` no fim, abre uma janela por programa.
+O script espera que os routers já encaminhem e arranca o bootstrapper, os nós, os players e por fim os servidores (para o 1.º anúncio já encontrar as ligações feitas). Os programas correm sem janela: cada um escreve em `logs/cenarioN-<nó>[-<programa>].log`, com o nome do nó em cada linha. Abrem-se só as janelas dos players e um painel. Cada player tem no topo uma faixa com o nome do cliente (C1, C2, ...), cada um na sua cor, e abrem lado a lado. Com `--janelas` no fim, abre uma janela por programa.
 
 No cenário 3, os dois servidores têm os mesmos 2 vídeos e os clientes pedem o vídeo 0 (`--ver 0`): cada um fica com o servidor mais barato. O bootstrapper corre no PC do N4 (10.0.21.20) na porta 5001, para não chocar com o nó do N4 na porta 5000.
 
-**Painel** (`python3 scripts/painel.py 3`, aberto pelo script): lê os logs de 2 em 2 s e mostra o estado de cada nó, de quem recebe cada servidor, para onde envia, o caminho de cada cliente (último PING), o que o player contou (frames em falta, atrasados, última paragem) e os últimos acontecimentos, tudo com nomes. Só lê ficheiros: nenhum nó fica a conhecer a árvore.
+**Painel** (`./rede painel`, aberto pelo script): lê os logs de 2 em 2 s e mostra, com nomes e cores:
+- **por onde passa o vídeo**: a árvore de cada vídeo, do servidor aos clientes (▶ = cliente a ver; ✖ = nó em baixo);
+- **clientes**: o vídeo que cada um está a ver, o caminho e o atraso do último PING, os frames em falta e a última paragem do player;
+- **nós**: estado (● ativo, ◌ a arrancar, ✖ em baixo, ■ parado), o pai para cada servidor e os vizinhos ativos;
+- **últimos acontecimentos**: falhas a vermelho, recuperações a verde, as nossas ações (`./rede ...`) a ciano.
 
-**Mexer num nó ou numa ligação** a partir do terminal normal (cada ação fica marcada nos logs e aparece no painel):
+A barra de cima fica vermelha enquanto houver um nó em baixo. `./rede status` mostra o painel uma vez (bom para prints), e `python3 scripts/painel.py 3 --hora 16:05:30` mostra como estava a rede a essa hora. Só lê ficheiros: nenhum nó fica a conhecer a árvore.
+
+**Mexer num nó ou numa ligação** a partir do terminal normal, com o `./rede` (pede o sudo sozinho; cada ação fica marcada nos logs e aparece no painel):
 
 ```bash
-sudo bash scripts/no.sh parar N1                # kill: sai e avisa os vizinhos (CLOSE)
-sudo bash scripts/no.sh matar N1                # kill -9: falha sem aviso
-sudo bash scripts/no.sh arrancar N1             # volta a arrancar, com o comando do arranque
-sudo bash scripts/no.sh piorar C1 N1 delay 50ms # ou loss 2%, nos dois sentidos da ligação C1–N1
-sudo bash scripts/no.sh cortar C1 N1            # 100% de perda entre C1 e N1
-sudo bash scripts/no.sh repor C1 N1
-sudo bash scripts/no.sh correr C1 tc -s qdisc show
-sudo bash scripts/no.sh parar-tudo              # no fim, antes do Stop do CORE
+./rede kill N1            # kill -9: falha sem aviso (também: ./rede kill N1 N2)
+./rede down N1            # kill: sai e avisa os vizinhos (CLOSE)
+./rede up N1              # volta a arrancar, com o comando do arranque
+./rede restart N1         # sai a avisar e arranca de novo (restart N1 -9: com kill -9)
+./rede loss C1 N1 2%      # perda nos dois sentidos da ligação C1–N1
+./rede delay C1 N1 50ms   # atraso (delay C1 N1 50ms 10ms: com variação)
+./rede cut C1 N1          # 100% de perda entre C1 e N1
+./rede fix C1 N1          # tira o que o loss/delay/cut pôs nessa ligação
+./rede run C1 tc -s qdisc show
+./rede logs N1            # segue o log do N1
+./rede stop               # no fim, antes do Stop do CORE
+./rede help               # todos os comandos
 ```
 
-Os programas correm em segundo plano, por isso o Stop do CORE não chega para os parar: usar o `parar-tudo` antes. O script de arranque também para o que tiver ficado de uma execução anterior.
+Para o player, um servidor de vídeo ou o bootstrapper, junta o programa depois do nó: `./rede kill S1 video0`, `./rede up C1 player`. O `./rede` chama o `scripts/no.sh`, que também se pode usar diretamente (`sudo bash scripts/no.sh matar N1`, ...).
 
-**Testes do HELLO** (cenário 3): `sudo -E bash scripts/testar_hello.sh` arranca o cenário e faz, seguidos, os 4 testes na ligação C1–N1: arranque, cortar e repor, parar e arrancar, matar e arrancar. Guarda o painel antes e depois de cada passo em `logs/teste-hello/`.
+Os programas correm em segundo plano, por isso o Stop do CORE não chega para os parar: usar o `./rede stop` antes. O script de arranque também para o que tiver ficado de uma execução anterior.
+
+**Desenho da árvore** (`./rede arvore`): escreve a árvore de cada vídeo no terminal e faz uma figura em `logs/arvore-cenarioN.svg`, com as posições do CORE, os vizinhos do overlay a tracejado e uma seta de cor por vídeo. Os clientes ficam de fora, como pediu o professor (`--com-clientes` para os mostrar). Para o relatório:
+
+```bash
+python3 scripts/arvore.py 3 --hora 16:05:30 --saida relatorio/figuras/arvore-antes.svg   # estado a essa hora
+python3 scripts/arvore.py 3 --rede-real          # com os routers e os cabos da rede real, a cinzento
+python3 scripts/arvore.py 3 --seguir             # refaz a figura de 2 em 2 s; abrir logs/arvore-cenario3.html no browser
+```
+
+Tal como o painel, só lê os logs.
+
+**Testes do HELLO** (cenário 3): `./rede hello` arranca o cenário e faz, seguidos, os 4 testes na ligação C1–N1: arranque, cortar e repor, parar e arrancar, matar e arrancar. Guarda o painel antes e depois de cada passo em `logs/teste-hello/`.
 
 ## 2. Arrancar à mão
 
@@ -263,8 +285,8 @@ Fazer falhar o N1 (`Ctrl+C`): o C1 mostra `sem vizinhos vivos: pede socorro ao a
 
 ### Árvore e Wireshark
 
-- `python3 scripts/arvore.py` (sessão à mão) ou `python3 scripts/arvore.py 3` (script): a árvore de
-  cada vídeo, sem os clientes. Com `--png logs/arvore.png`, também uma figura.
+- `python3 scripts/arvore.py`: a árvore de cada vídeo, sem os clientes, no terminal e numa figura
+  (`logs/arvore-cenarioN.svg`). Lê os logs mais recentes: os do script ou os dos nós arrancados à mão.
 - Captura num nó: `tcpdump -i eth0 -w /tmp/n1.pcap udp port 5000`. Abrir no PC, como utilizador
   normal (o Wireshark não corre scripts Lua como root):
   `wireshark -X lua_script:wireshark/ott.lua /tmp/n1.pcap`. Filtros úteis: `ott.tipo == 0x03` (HELLO),

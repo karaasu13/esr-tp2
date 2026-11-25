@@ -21,7 +21,7 @@ Os números entre parênteses são os da lista original, de 3/11.
 |---|---|---|
 | Reparação local (1) | Quando o pai cai, o nó passa logo ao vizinho viável mais barato, sem esperar pelo anúncio seguinte | `ott/rotas.py` |
 | Aviso de perda de rota (2) | Um nó sem pai e sem vizinho viável manda WITHDRAW, para quem recebia dele procurar outro caminho | `ott/rotas.py` |
-| Detetar a falha pela falta de vídeo (5) | 300 ms sem vídeo do pai fazem trocar de pai. No CORE, o vídeo parou 0,35 a 0,55 s, contra cerca de 3 s pelo silêncio | `ott/__main__.py` |
+| Detetar a falha pela falta de vídeo (5) | 300 ms sem vídeo do pai fazem trocar de pai. No CORE, o vídeo parou 0,35 a 0,55 s, contra cerca de 3 s pelo silêncio. Um pai novo que também não envie (porque dependia do mesmo nó) tem 1 s antes de se procurar outro; o `JOIN` leva a marca "recuperar" para os nós acima fazerem o mesmo | `ott/__main__.py` |
 | Mudar de caminho quando o atual piora (4) | Troca por um vizinho melhor só com mais de 15% e 2 unidades de diferença (a margem) | `ott/rotas.py` |
 | Custo com quatro medidas (6) | `RTT mínimo + jitter + 100 × perda (%) + saltos`. O professor achou a fórmula elegante; o peso da perda passou de 20 para 100, por sugestão dele (sem retransmissão, a perda pesa mais) | `custo()` em `ott/rotas.py` |
 | Anunciar de novo quando a rota muda (27) | Os nós a seguir ficam a conhecer o melhor custo, e não o do primeiro anúncio a chegar | `ott/rotas.py` |
@@ -35,8 +35,8 @@ Os números entre parênteses são os da lista original, de 3/11.
 | Renovação do pedido de vídeo | O JOIN é repetido de 2 em 2 s; um destino sem renovação durante 6 s é largado | `ott/__main__.py` |
 | Medições no cliente (21) | A hora de envio vai no timestamp do RTP, em ms; o medidor calcula atraso, jitter, perda e cortes | `player/Medidor.py`, `scripts/analisar_medicoes.py` |
 | PING com a hora em cada salto (23) | Mostra o caminho do vídeo e o tempo de cada salto. Só para testes | `ott/__main__.py` |
+| Logs organizados e desenho da árvore (22) | O painel e o `scripts/arvore.py` leem os logs de todos os nós e desenham a árvore de cada vídeo, sem os clientes (pedido do professor), em texto e numa figura SVG com as posições do CORE, também num instante passado (`--hora`). Nenhum nó fica a conhecer a árvore: quem a junta é uma ferramenta de teste | `scripts/logs_ott.py`, `scripts/painel.py`, `scripts/arvore.py` |
 | Comparação com a solução sem overlay (24) | Com 3 clientes, o servidor envia 35% menos com overlay | [`resultados-medicoes.md`](resultados-medicoes.md) |
-| Árvore de cada vídeo, sem os clientes (22) | `python3 scripts/arvore.py` (texto) ou `--png` (figura): segue a tabela de fluxos de cada nó, nos logs, desde o servidor. O painel continua a mostrar o resto (pais, destinos, caminho de cada cliente). Nenhum nó fica a conhecer a árvore: quem a junta é uma ferramenta de teste | `scripts/arvore.py` |
 | Pedido de socorro ao "avô" (33) | *Autorizado pelo professor.* Um nó com um só vizinho vivo pede-lhe o avô (os pais dele); se ficar sem vizinhos, liga-se ao avô, que passa a vizinho normal. Quando um vizinho original volta, a ligação ao avô fecha. Regras e passos em [`protocolo.md`](protocolo.md), "Pedido de socorro ao avô" | `ott/__main__.py`, `tests/test_avo.py` |
 | Perda pelos números em falta | Cada nó numera à parte os pacotes que manda a cada vizinho; quem recebe conta os que faltam nos últimos 200. Usa todos os pacotes (vídeo incluído) e mede só o sentido de lá para cá | `ott/transporte.py` |
 | Leitor do protocolo para o Wireshark (25) | Mostra o cabeçalho pelo nome, o JSON do controlo e o RTP dentro de cada DATA. `wireshark -X lua_script:wireshark/ott.lua captura.pcap` (não corre como root) | `wireshark/ott.lua` |

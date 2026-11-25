@@ -9,18 +9,21 @@ Recebe pacotes RTP por UDP e mostra cada frame (JPEG). Alterações ao original:
   paragem do vídeo (mais de 200 ms sem frame novo), com a hora;
 - tkMessageBox (Python 2) trocado por tkinter.messagebox;
 - um nº de frame que recua muito (troca para um servidor desfasado, ou vídeo que recomeça) não é
-  tratado como atrasado: o player continua a partir daí, em vez de ficar parado até apanhar.
+  tratado como atrasado: o player continua a partir daí, em vez de ficar parado até apanhar;
+- uma faixa no topo da janela com o nome do cliente (ex: C1), cada um com a sua cor, para se
+  saber qual é qual com vários players abertos.
 """
 from __future__ import annotations
 
 import io
 import os
+import re
 import socket
 import threading
 import time
 from datetime import datetime
 import tkinter.messagebox
-from tkinter import Button, Label, E, N, S, W
+from tkinter import Button, Frame, Label, E, N, S, W
 
 from PIL import Image, ImageTk
 
@@ -29,7 +32,20 @@ from RtpPacket import RtpPacket, avanco_seq, recomecou
 ATUALIZAR_MS = 20  # de quanto em quanto tempo a janela vai buscar o último frame
 RESUMO_S = 5  # de quanto em quanto tempo escreve o resumo no log
 PARAGEM_S = 0.2  # sem frame novo durante mais do que isto (4 frames a 20/s): escreve no log
-NOME = os.environ.get("OTT_NOME", "-")  # nome do nó, posto pelos scripts do CORE
+CORES = ["#1f6feb", "#d1242f", "#1a7f37", "#8250df", "#bc4c00", "#0a7ea4", "#bf3989", "#57606a"]
+
+
+def nome_do_cliente() -> str:
+    """Nome do nó: o que os scripts do CORE põem em OTT_NOME ou, se o player foi arrancado à mão
+    numa shell do CORE, o nome da máquina (no CORE, cada nó tem o seu: C1, C2, ...)."""
+    nome = os.environ.get("OTT_NOME", "").strip()
+    if not nome:
+        maquina = socket.gethostname()
+        nome = maquina if re.fullmatch(r"[A-Za-z]+\d+", maquina) else ""
+    return nome
+
+
+NOME = nome_do_cliente() or "-"
 
 
 def registar(texto: str) -> None:
@@ -61,12 +77,22 @@ class ClienteGUI:
         self.master.after(ATUALIZAR_MS, self.updateMovie)
 
     def createWidgets(self):
+        # Faixa com o nome do cliente, numa cor própria (C1 azul, C2 vermelho, ...).
+        m = re.search(r"(\d+)$", NOME)
+        cor = CORES[(int(m.group(1)) - 1) % len(CORES)] if m else CORES[-1]
+        ident = os.environ.get("OTT_ID", "").strip()
+        faixa = Frame(self.master, bg=cor)
+        faixa.grid(row=0, column=0, columnspan=2, sticky=W + E)
+        Label(faixa, text=NOME if NOME != "-" else "player", bg=cor, fg="white",
+              font=("Helvetica", 20, "bold")).pack(side="left", padx=10, pady=4)
+        Label(faixa, text=f"cliente{f' · nó {ident}' if ident else ''} · porta {self.port}",
+              bg=cor, fg="white", font=("Helvetica", 10)).pack(side="left", pady=4)
         self.label = Label(self.master, height=19)
-        self.label.grid(row=0, column=0, columnspan=2, sticky=W + E + N + S, padx=5, pady=5)
+        self.label.grid(row=1, column=0, columnspan=2, sticky=W + E + N + S, padx=5, pady=5)
         self.estado = Label(self.master, text=f"à espera em {self.addr}:{self.port}")
-        self.estado.grid(row=1, column=0, padx=2, pady=2, sticky=W)
+        self.estado.grid(row=2, column=0, padx=2, pady=2, sticky=W)
         self.teardown = Button(self.master, width=20, padx=3, pady=3, text="Sair", command=self.exitClient)
-        self.teardown.grid(row=1, column=1, padx=2, pady=2)
+        self.teardown.grid(row=2, column=1, padx=2, pady=2)
 
     def openRtpPort(self):
         self.rtpSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
