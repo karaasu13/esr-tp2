@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from bootstrapper.servidor import Bootstrapper, carregar_configuracao
+from ott import __main__ as ott_main
 from ott import rotas as ott_rotas
 from ott.__main__ import NoOTT
 from ott.protocolo import Tipo
@@ -608,6 +609,52 @@ class TestDoisServidores(unittest.IsolatedAsyncioTestCase):
         for player in self.players.values():
             self.assertEqual([await receber(player) for _ in FRAMES], FRAMES)
         self.assertEqual(nos[C2]._servidor_do_video[0], S2)
+
+    async def test_leitor_de_video_morre_e_o_cliente_passa_para_o_outro_servidor(self):
+        S1, S2, C1 = self.S1, self.S2, self.C1
+        esperar = TestDoisServidores._esperar_s
+        with patch.object(ott_main, "SEM_LEITOR", 0.3):
+            nos = await self._montar()
+            await esperar(lambda: nos[C1]._servidor_do_video.get(0) == S1)
+            nos[S1]._frame_do_servidor(0, FRAMES[0])  # o leitor do S1 mandou um frame e calou-se
+            await esperar(lambda: 0 not in nos[C1].rotas.servidores[S1].anuncios[self.A].videos)
+            await esperar(lambda: nos[C1]._servidor_do_video.get(0) == S2)
+            nos[S1]._frame_do_servidor(0, FRAMES[1])  # voltou: o S1 volta a anunciar o vídeo 0
+            await esperar(lambda: 0 in nos[C1].rotas.servidores[S1].anuncios[self.A].videos)
+
+    async def test_player_fecha_e_o_cliente_deixa_de_pedir(self):
+        S1, A, C1 = self.S1, self.A, self.C1
+        esperar = TestDoisServidores._esperar_s
+        nos = await self._montar()
+        await esperar(lambda: C1 in nos[A].tabela_fluxos.get((S1, 0), ott_main.FluxoVideo()).destinos)
+        nos[C1].parar_de_ver()
+        await esperar(lambda: C1 not in nos[A].tabela_fluxos[(S1, 0)].destinos)
+        self.assertEqual(nos[C1].fluxos_player, set())
+        await asyncio.sleep(0.5)  # e não volta a pedir na escolha de servidores seguinte
+        self.assertNotIn(C1, nos[A].tabela_fluxos[(S1, 0)].destinos)
+
+    _esperar_s = staticmethod(TestCenario2._esperar)
+
+
+class TestRegisto(unittest.IsolatedAsyncioTestCase):
+    async def test_insiste_ate_o_bootstrapper_aparecer(self):
+        porta = porta_livre()
+        dados = {"bootstrapper": {"host": "127.0.0.7", "port": porta},
+                 "nodes": {"127.0.0.1": 1}, "links": []}
+        with tempfile.TemporaryDirectory() as pasta:
+            config = Path(pasta) / "config.json"
+            config.write_text(json.dumps(dados), encoding="utf-8")
+            configuracao = carregar_configuracao(config)
+        no = NoOTT("127.0.0.7", porta_bootstrapper=porta, host="127.0.0.1", porta=porta)
+        bootstrapper = Bootstrapper(configuracao)
+        self.addAsyncCleanup(TestCenario2._fechar, no, bootstrapper)
+        with patch.object(ott_main, "INSISTIR_REGISTO", 0.2):
+            arranque = asyncio.create_task(no.start(insistir=True))
+            await asyncio.sleep(0.6)  # ainda sem bootstrapper: continua à espera, sem erro
+            self.assertFalse(arranque.done())
+            await bootstrapper.start()
+            await asyncio.wait_for(arranque, 5)
+        self.assertEqual(no.transporte.id, 1)
 
 
 if __name__ == "__main__":

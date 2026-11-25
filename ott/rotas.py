@@ -123,11 +123,13 @@ class Rotas:
         rota = self.servidores.get(servidor)
         return rota.anuncios.get(rota.pai) if rota and rota.pai is not None else None
 
-    async def anunciar_servidor(self, videos: list[int]) -> None:
-        """Ciclo do nó com servidor local: anuncia-se a todos os vizinhos até ser cancelado."""
+    async def anunciar_servidor(self, videos: "list[int] | Callable[[], list[int]]") -> None:
+        """Ciclo do nó com servidor local: anuncia-se a todos os vizinhos até ser cancelado.
+        `videos` pode ser uma função, chamada a cada anúncio (os vídeos que estão a chegar)."""
         ronda = int(time.time())  # um servidor que reinicia anuncia logo rondas mais altas
         while True:
-            self._enviar({"srv": self.transporte.id, "ronda": ronda, "videos": videos,
+            lista = videos() if callable(videos) else videos
+            self._enviar({"srv": self.transporte.id, "ronda": ronda, "videos": lista,
                           "rtt": 0.0, "jitter": 0.0, "perda": 0.0, "saltos": 0}, exceto=None)
             ronda += 1
             await asyncio.sleep(PERIODO_ANUNCIO * random.uniform(1 - VARIACAO_ANUNCIO,
